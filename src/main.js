@@ -6,7 +6,8 @@ import {createApp} from "vue";
 //// Tauri
 import {invoke} from '@tauri-apps/api/core';
 import {listen} from "@tauri-apps/api/event";
-import {confirm, open} from '@tauri-apps/plugin-dialog';
+import {open} from '@tauri-apps/plugin-dialog';
+import {confirm} from "./core/extras/Dialog";
 import {openUrl} from "@tauri-apps/plugin-opener";
 import {
     create,
@@ -94,6 +95,8 @@ import Optional from "./core/utils/Optional";
 import WaitInterval from "./core/utils/WaitInterval";
 import * as Extras from "./core/extras/Extras";
 import * as Library from "./core/extras/Library";
+import * as Sidebar from "./core/extras/Sidebar";
+import {setSpeaker} from "./core/extras/Dialog";
 
 // ----- EXTERNAL ------- //
 import {Base64} from 'js-base64';
@@ -307,7 +310,8 @@ async function loadConfig(path) {
     const configPath = path + fileTerminator + "client-config.json";
     const hasConfig = await isExist(configPath)
     const hostname = await invoke("get_host_name", {})
-    let configData = await new ProgramData(hostname);
+    const userName = await invoke("get_user_name", {}).catch(() => hostname)
+    let configData = await new ProgramData(userName);
 
     Logger.log("Local Path: " + path)
 
@@ -362,8 +366,12 @@ async function loadConfig(path) {
 	.default("version", "0.0.0-release")
 	.default("language", STRINGS.EMPTY)
 	.default("bg_offset", 0)
-	.default("user_name", hostname)
+	.default("user_name", userName)
 	.post()
+
+    if (configData.get("user_name") === hostname) {
+	configData.set("user_name", userName)
+    }
 
     Logger.log("Cover Id: " + configData.get("coverId"))
 
@@ -637,6 +645,7 @@ async function setTheme(name, first) {
     document.body.style.setProperty("--primary-color-saturated", CLIENT_THEMES[name].primary_color_saturated)
 
     localConfig.config.set("theme", name)
+    setSpeaker(name)
     if (!first) {
 	await saveConfig()
     }
@@ -1037,6 +1046,17 @@ async function addMod(name) {
 	await create(configPath)
 	const data = await metadata(selectedPath + fileTerminator + name);
 	configData.size = data.size;
+	// Settings restored from Google Drive before this mod was installed here
+	const restored = await invoke("launcher_take_pending", {modName: name}).catch(() => null);
+	if (restored) {
+	    Logger.info("Applying restored launcher settings to " + name)
+	    for (const key in restored) {
+		configData[key] = key === "coverId" && isNaN(parseInt(restored[key]))
+		    ? (shortToCoverIdMap.get(restored[key]) ?? 0)
+		    : restored[key];
+	    }
+	}
+	if (restored) Extras.refreshReimportReminder()
 	await saveModData();
     }
 
@@ -1154,6 +1174,7 @@ async function addMod(name) {
 	    } else {
 		sidetext.innerHTML = normalText
 	    }
+	    Sidebar.decorate(sidetext, configData)
 
 	    launcher.getFunctions().resetOrder()
 	    Hud.setPinned(configData.pinned)
@@ -1232,6 +1253,7 @@ async function addMod(name) {
 	    } else {
 		sidetext.innerHTML = normalText
 	    }
+	    Sidebar.decorate(sidetext, configData)
 	    launcher.getFunctions().isFavorite = configData.favorite;
 	    launcher.getFunctions().resetOrder()
 	    await saveModData();
@@ -1345,15 +1367,14 @@ async function addMod(name) {
 			return x[x.length - 1]
 		}
 
-	    modDescription = name +
-		"<br>Renpy: "
-		+ escapedDescription
-		+ "<br>Custom Exe: " +
-		(hasCustomExecutable ?
-		    TranslationUtil.of("yes") + " | " + (getOSType() === OS.TYPE.MAC && gameExePath.includes('/') ? getLastPath() : gameExePath) :
-		    TranslationUtil.of("no"))
-		+ "<br><br>Credits: <br>"
-		+ (escapedModCredits !== undefined ? escapedModCredits : "No Credits Found!");
+	    const launcherName = hasCustomExecutable ? (getOSType() === OS.TYPE.MAC && gameExePath.includes('/') ? getLastPath() : gameExePath) : null;
+	    modDescription = (escapedModCredits !== undefined
+		    ? "<div class='ddx-credits'>" + escapedModCredits + "</div>"
+		    : "<p class='ddx-desc-empty'>This mod doesn't include a credits file.</p>")
+		+ "<div class='ddx-details'>"
+		+ (configData.renpy ? "Ren'Py " + htmlEscape(configData.renpy) : "Ren'Py version not found")
+		+ (launcherName ? "<br>Starts with " + htmlEscape(launcherName) : "")
+		+ "</div>";
 
 	    Hud.setHeart(configData.favorite)
 	    AssetsManager.Sound.play(AssetsManager.Sound.BOOP_SOUND)
@@ -1373,12 +1394,13 @@ async function addMod(name) {
 	    }
 
 	    if (configData.size === 0) {
+		const descriptionForLater = modDescription;
 		updateDisplayInfo(name, configData.author, "Reading...", Math.floor(playTimeMinutes / 60) + TranslationUtil.sub("timeUnits").of("h") + STRINGS.SPACE + Math.floor(playTimeMinutes % 60) + TranslationUtil.sub("timeUnits").of("m"), modDescription, "Never")
 		setTimeout(async () => {
 		    let data = await metadata(selectedPath + fileTerminator + name);
 		    configData.size = data.size;
 		    if (currentEntry === name) {
-			updateDisplayInfo(name, configData.author, (configData.size / Units.ByteSizeMap.MB) > 1000 ? (Math.floor(configData.size / Units.ByteSizeMap.GB) + " GB") : (Math.floor(configData.size / Units.ByteSizeMap.MB) + " MB"), Math.floor(playTimeMinutes / 60) + TranslationUtil.sub("timeUnits").of("h") + STRINGS.SPACE + Math.floor(playTimeMinutes % 60) + TranslationUtil.sub("timeUnits").of("m"), name + "<br>Renpy: " + escapedDescription + "<br>Custom Exe: " + ((gameExePath !== undefined && gameExePath !== STRINGS.EMPTY && !gameExePath.toString().endsWith(OS.EXECUTABLE.WINDOWS)) ? "Yes | " + gameExePath : "No") + "<br><br>Credits: <br>" + (escapedModCredits !== undefined ? escapedModCredits : "None Found!"), lastPlayed)
+			updateDisplayInfo(name, configData.author, (configData.size / Units.ByteSizeMap.MB) > 1000 ? (Math.floor(configData.size / Units.ByteSizeMap.GB) + " GB") : (Math.floor(configData.size / Units.ByteSizeMap.MB) + " MB"), Math.floor(playTimeMinutes / 60) + TranslationUtil.sub("timeUnits").of("h") + STRINGS.SPACE + Math.floor(playTimeMinutes % 60) + TranslationUtil.sub("timeUnits").of("m"), descriptionForLater, lastPlayed)
 		    }
 		    data = null
 		}, 0)
@@ -2306,7 +2328,7 @@ async function setupIPCListeners(onLoadStartTime) {
 	Hud.ofId("language-list").classList.add("language-list-hide");
 
 	DownloadsManager.startDownload(url, path)
-	confirm("Close Other Windows?").then(async (e) => {
+	confirm("Close the other open windows?", {okLabel: "Close them", cancelLabel: "Keep open"}).then(async (e) => {
 	    if (e) {
 		await invoke("goto_main")
 	    }
@@ -2642,6 +2664,15 @@ async function setupHTMListeners(onLoadStartTime) {
 	getLocalPath: () => localPath,
 	getProgramConfig: () => localConfig.config,
 	saveProgramConfig: saveConfig,
+	// Copies an image into the cover library and returns its cover id
+	addCover: async (sourcePath) => {
+	    const folder = localPath + fileTerminator + terminatePath("store\\images")
+	    if (!await isExist(folder)) await mkdir(folder, {recursive: true})
+	    const target = folder + fileTerminator + "z_reddit-" + Date.now() + "." + sourcePath.split(".").pop()
+	    await writeFile(target, await readFile(sourcePath))
+	    await updateCoverImages()
+	    return covers.indexOf(target)
+	},
     })
 
     Hud.onClick("save-profile", async () => {
@@ -2983,7 +3014,12 @@ async function setupHTMListeners(onLoadStartTime) {
 
     Hud.ofId("delete").addEventListener("mouseup", async () => {
 	if (currentEntry !== STRINGS.EMPTY) {
-	    let confirmed = await confirm("Are you sure you want to delete '" + getLauncher(currentEntry).getFunctions().location + "' and its data?")
+	    let confirmed = await confirm("This deletes the whole mod folder, including any saves kept inside it:\n" + getLauncher(currentEntry).getFunctions().location, {
+		title: "Delete " + getLauncher(currentEntry).getFunctions().getName() + "?",
+		okLabel: "Delete mod",
+		cancelLabel: "Keep it",
+		danger: true
+	    })
 	    if (confirmed) {
 		showContainers(false)
 		await invoke("delete_path", {
@@ -3056,7 +3092,8 @@ async function setupHTMListeners(onLoadStartTime) {
 		scriptsPath = absoluteLocation + fileTerminator + terminatePath("game\\options.rpyc");
 		if (!await isExist(scriptsPath)) {
 		    Logger.warn("No save found!")
-		    await confirm("No save found!")
+		    Hud.hide("profile-blur")
+		    await confirm("Couldn't find where this mod keeps its saves. Profiles need the mod's game\\scripts.rpa or game\\options.rpyc file.")
 		    return;
 		}
 	    }
@@ -3131,16 +3168,18 @@ async function setupHTMListeners(onLoadStartTime) {
     })
 
     Hud.ofId("modlist").addEventListener("click", async (e) => {
-	let target = e.target;
-	if (target.nodeName === "SPAN") {
-	    target = target.parentElement;
-	}
+	// The row may hold an icon image or detail spans, so look for the row itself
+	let target = e.target.closest ? e.target.closest("header.sidebutton") : null;
 	if (!Hud.isVoid(target)) {
 	    const id = target.id;
 	    if (!id.startsWith("mod-")) return;
 
 	    const realId = id.substring(4)
-	    if (realId === currentEntry) return;
+	    if (realId === currentEntry) {
+		// Already open: just give the click its sound
+		AssetsManager.Sound.play(AssetsManager.Sound.BOOP_SOUND)
+		return;
+	    }
 
 	    const launcher = getLauncher(realId)
 	    if (Hud.isVoid(launcher)) return;
