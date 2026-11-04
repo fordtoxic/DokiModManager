@@ -2000,7 +2000,7 @@ fn setup<'a>(app: &'a mut tauri::App) -> Result<(), Box<dyn std::error::Error>> 
         setup_logs().unwrap();
     });
     push_stamp("<INIT>");
-    stamp(format!("Running at {:?}", CURRENT_DIR.get().expect("Failed to get current dir")).as_str());
+    stamp(format!("Running at {:?}", CURRENT_DIR.lock().expect("Failed to get current dir")).as_str());
 
     let handle = app.handle();
     let window = app.get_webview_window("main").unwrap();
