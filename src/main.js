@@ -1733,6 +1733,22 @@ async function updateConcurrentGameInfo() {
 }
 
 /**
+ * Why a folder name can't be used, or "" when it's fine.
+ * @param {string} value
+ * @returns {string}
+ */
+
+function folderNameProblem(value) {
+    if (value.length > 100) return "names can be at most 100 characters long.";
+    // The shared pattern has the g flag, which makes .test() stateful, so use a fresh copy
+    const bad = new RegExp(INVALID_FOLDER_CHARACTERS.source, "");
+    if (/[. ]$/.test(value)) return "names can't end with a dot or a space.";
+    if (bad.test(value)) return "names can't contain any of these characters:  < > : \" / \\ | ? *";
+    if (INVALID_FOLDER_NAMES.test(value)) return "Windows reserves that name.";
+    return "";
+}
+
+/**
  * Rename Mod
  * @returns {Promise<void>}
  */
@@ -1750,13 +1766,15 @@ async function renameMod() {
     const oldName = (await getLauncher(currentEntry).getFunctions().getPath()) + fileTerminator + name;
     const newName = (await getLauncher(currentEntry).getFunctions().getPath()) + fileTerminator + value;
 
-    if (value.length > 100 || INVALID_FOLDER_CHARACTERS.test(value) !== null || INVALID_FOLDER_NAMES.test(value) != null) {
-	await confirm("The name '" + value + "' is invalid!")
+    const problem = folderNameProblem(value);
+    if (problem) {
+	await confirm("Can't rename to '" + value + "': " + problem)
 	Hud.ofId("modtitle").value = formatModName(currentEntry);
 	return;
     }
 
-    if (await isExist(await getLauncher(currentEntry).getFunctions().getPath() + fileTerminator + newName)) {
+    // Changing only the capital letters is the same folder on Windows, so skip the duplicate check then
+    if (value.toLowerCase() !== name.toLowerCase() && await isExist(newName)) {
 	await confirm("Another mod with the name '" + value + "' already exists!")
 	Hud.ofId("modtitle").value = formatModName(currentEntry);
 	return;

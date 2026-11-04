@@ -1,27 +1,9 @@
-1.8.1-ford.1
-FORD EDITION (first release of this fork)
+1.8.1-ford.2
+Recommended (bug fix)
 
-Google Drive
-- Save sync: upload a mod's saves to your Google Drive and get
-  them back on another PC (your current saves are backed up first)
-- Auto-sync: uploads saves when you close a mod, offers newer
-  saves from your other PCs before you play
-- Launcher data sync: ratings, statuses, Reddit links, pins,
-  icons, backgrounds, covers, play time and settings
-- New PC: lists the mods to reimport and gives them back their
-  settings once they're added
-
-Mods
-- 1-5 star ratings, status labels, a Reddit link per mod
-- Sorting and filters, duplicate warning on import
-- Custom icon and background for each mod
-- Grab images from a mod's Reddit post by pasting them in
-- Right-click menu on mods with the common actions
-- Storage panel with cleanup of logs, caches and temp files
-
-Look and feel
-- Foldable Main and Mods lists, hideable Main links,
-  sidebar options
-- DDLC-style dialogs, click sound on every mod row
-- Fixed the screen staying blurred after "No save found!"
-- Updates now come from github.com/fordtoxic/DokiModManager
+Renaming mods
+- Fixed every new mod name being rejected as invalid
+- Bad names now say what's wrong (characters Windows doesn't
+  allow, a dot or space at the end, too long, reserved names)
+- Fixed the check for another mod that already has that name
+- Changing only capital letters (my mod -> My Mod) works
