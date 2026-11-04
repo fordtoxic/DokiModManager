@@ -50,6 +50,7 @@ use window_vibrancy::{apply_vibrancy, NSVisualEffectMaterial};
 mod constants;
 mod discord_rpc;
 mod downloader;
+mod gdrive;
 mod hash;
 mod simple_logger;
 mod unarc_extractor;
@@ -2169,7 +2170,18 @@ pub async fn run() {
             get_host_name,
             open_webview,
             goto_main,
-            sync_log
+            sync_log,
+            gdrive::gdrive_status,
+            gdrive::gdrive_configure,
+            gdrive::gdrive_reset_client,
+            gdrive::gdrive_set_auto_sync,
+            gdrive::gdrive_sign_in,
+            gdrive::gdrive_sign_out,
+            gdrive::gdrive_remote_info,
+            gdrive::gdrive_upload,
+            gdrive::gdrive_download,
+            gdrive::ddx_measure,
+            gdrive::ddx_remove
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

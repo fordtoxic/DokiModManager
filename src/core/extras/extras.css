@@ -1,0 +1,519 @@
+/* Extra features: rating/status/Reddit row, library bar, modals, storage, drop overlay. */
+
+.ddx-hidden {
+    display: none !important;
+}
+
+.ddx-filtered {
+    display: none !important;
+}
+
+/* Fixed sidebar headers must stay above every mod, whatever the sort. */
+#modlist .sticky {
+    order: -100000000;
+}
+
+/* ---------- sidebar sort / filter ---------- */
+
+.ddx-library-bar {
+    display: flex;
+    gap: 0.4rem;
+    width: 21.5vw;
+    flex-shrink: 0;
+    padding: 0.15rem 0 0.35rem;
+}
+
+.ddx-select {
+    font-family: "Aller", sans-serif;
+    font-size: 0.8rem;
+    color: white;
+    background: rgba(255, 255, 255, 0.08);
+    border: none;
+    border-radius: 0.75rem;
+    padding: 0.3rem 0.5rem;
+    outline: none;
+    cursor: pointer;
+    min-width: 0;
+    flex: 1;
+    transition: background ease-out 0.15s;
+}
+
+.ddx-select:hover,
+.ddx-select:focus-visible {
+    background: rgba(255, 255, 255, 0.16);
+}
+
+.ddx-select option {
+    background: rgb(30, 30, 30);
+    color: white;
+}
+
+/* ---------- mod page meta row ---------- */
+
+.ddx-meta {
+    position: absolute;
+    top: 8.1rem;
+    left: 15rem;
+    right: 1.5rem;
+    display: flex;
+    align-items: center;
+    gap: 0.55rem;
+    height: 2rem;
+    font-family: "Aller", sans-serif;
+    color: white;
+    z-index: 2;
+}
+
+.ddx-stars {
+    display: flex;
+    gap: 0.05rem;
+}
+
+.ddx-star {
+    font-size: 1.35rem;
+    line-height: 1;
+    padding: 0 0.05rem;
+    background: none;
+    border: none;
+    color: rgba(255, 255, 255, 0.25);
+    cursor: pointer;
+    transition: color ease-out 0.12s, scale cubic-bezier(0.175, 0.885, 0.32, 1.275) 0.25s;
+}
+
+.ddx-star:hover {
+    scale: 1.2;
+}
+
+.ddx-star-on {
+    color: rgb(var(--primary-color));
+    text-shadow: rgba(var(--primary-color), 0.6) 0 0 8px;
+}
+
+.ddx-star-preview.ddx-star-on {
+    color: rgba(var(--primary-color), 0.75);
+}
+
+.ddx-rating-label {
+    font-size: 0.8rem;
+    color: rgb(190, 190, 190);
+    min-width: 4.2rem;
+}
+
+.ddx-status {
+    flex: 0 0 auto;
+    width: 8rem;
+}
+
+.ddx-chip {
+    font-family: "Aller", sans-serif;
+    font-size: 0.8rem;
+    color: white;
+    background: rgba(var(--primary-color), 0.18);
+    border: 1px solid rgba(var(--primary-color), 0.45);
+    border-radius: 0.75rem;
+    padding: 0.3rem 0.7rem;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background ease-out 0.15s, scale cubic-bezier(0.175, 0.885, 0.32, 1.275) 0.25s;
+}
+
+.ddx-chip:hover {
+    background: rgba(var(--primary-color), 0.32);
+    scale: 1.04;
+}
+
+.ddx-chip-empty {
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px dashed rgba(255, 255, 255, 0.35);
+}
+
+.ddx-chip-icon {
+    padding: 0.3rem 0.5rem;
+}
+
+/* ---------- top bar ---------- */
+
+.ddx-top-actions {
+    position: absolute;
+    top: 1.5vh;
+    right: 25.25rem;
+    display: flex;
+    gap: 0.5rem;
+    z-index: 5;
+}
+
+.ddx-pill {
+    font-family: "Aller", sans-serif;
+    font-size: 1rem;
+    font-weight: bold;
+    color: white;
+    height: 2rem;
+    padding: 0 0.9rem;
+    background-color: rgba(0, 0, 0, 0.6);
+    backdrop-filter: blur(10px);
+    border-radius: 1rem;
+    border: none;
+    box-shadow: rgba(0, 0, 0, 0.5) 0 0 10px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: all ease-out 0.25s, scale 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+.ddx-pill:hover {
+    scale: 1.05;
+    background-color: rgba(30, 30, 30, 0.75);
+}
+
+.ddx-pill-active {
+    box-shadow: rgba(var(--primary-color), 0.55) 0 0 10px;
+}
+
+/* ---------- modal ---------- */
+
+.ddx-modal-bg {
+    position: absolute;
+    inset: 0;
+    z-index: 50;
+    display: grid;
+    place-items: center;
+    background: rgba(0, 0, 0, 0.55);
+    backdrop-filter: blur(4px);
+}
+
+.ddx-modal {
+    position: relative;
+    width: 30rem;
+    max-height: 82vh;
+    display: flex;
+    flex-direction: column;
+    background: rgba(18, 18, 18, 0.88);
+    backdrop-filter: blur(20px);
+    border-radius: 1.5rem;
+    corner-shape: squircle;
+    box-shadow: rgba(0, 0, 0, 0.6) 0 0 30px, inset rgba(var(--primary-color), 0.15) 0 0 0 1px;
+    font-family: "Aller", sans-serif;
+    color: white;
+    padding: 1.25rem 1.5rem 1.25rem;
+}
+
+.ddx-modal-wide {
+    width: 40rem;
+}
+
+.ddx-modal-title {
+    font-size: 1.35rem;
+    font-weight: bold;
+    padding-right: 2rem;
+    margin-bottom: 0.75rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    text-shadow: rgb(var(--primary-color)) 0 0 10px;
+}
+
+.ddx-modal-close {
+    position: absolute;
+    top: 1rem;
+    right: 1rem;
+    width: 2rem;
+    height: 2rem;
+    border-radius: 1rem;
+    border: none;
+    background: rgba(255, 255, 255, 0.08);
+    color: white;
+    cursor: pointer;
+}
+
+.ddx-modal-close:hover {
+    background: rgba(255, 255, 255, 0.18);
+}
+
+.ddx-modal-body {
+    overflow-y: auto;
+    scrollbar-width: thin;
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+}
+
+.ddx-text {
+    font-size: 0.9rem;
+    line-height: 1.35;
+    color: rgb(225, 225, 225);
+    margin: 0;
+}
+
+.ddx-subtle {
+    color: rgb(170, 170, 170);
+    font-weight: normal;
+}
+
+.ddx-error {
+    font-size: 0.85rem;
+    color: rgb(255, 130, 130);
+    margin: 0;
+    word-break: break-word;
+}
+
+.ddx-warning {
+    font-size: 0.85rem;
+    color: rgb(255, 210, 120);
+    margin: 0.25rem 0 0;
+}
+
+.ddx-steps {
+    margin: 0;
+    padding-left: 1.2rem;
+    font-size: 0.85rem;
+    line-height: 1.45;
+    color: rgb(215, 215, 215);
+}
+
+.ddx-input {
+    font-family: "Aller", sans-serif;
+    font-size: 0.9rem;
+    color: white;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 0.75rem;
+    padding: 0.6rem 0.8rem;
+    outline: none;
+    user-select: text;
+}
+
+.ddx-input:focus {
+    border-color: rgba(var(--primary-color), 0.7);
+}
+
+.ddx-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.5rem;
+    margin-top: 0.4rem;
+}
+
+.ddx-button {
+    font-family: "Aller", sans-serif;
+    font-size: 0.9rem;
+    font-weight: bold;
+    color: rgb(20, 20, 20);
+    background: rgb(var(--primary-color));
+    border: none;
+    border-radius: 0.9rem;
+    padding: 0.55rem 1.1rem;
+    cursor: pointer;
+    transition: filter ease-out 0.15s, scale cubic-bezier(0.175, 0.885, 0.32, 1.275) 0.25s;
+}
+
+.ddx-button:hover:not(:disabled) {
+    filter: brightness(1.1);
+    scale: 1.03;
+}
+
+.ddx-button:disabled {
+    opacity: 0.45;
+    cursor: default;
+}
+
+.ddx-button-ghost {
+    color: white;
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.ddx-link {
+    align-self: flex-start;
+    font-family: "Aller", sans-serif;
+    font-size: 0.85rem;
+    color: rgb(var(--primary-color));
+    background: none;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+    text-decoration: underline;
+}
+
+.ddx-kv {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 0.9rem;
+    padding: 0.7rem 0.9rem;
+}
+
+.ddx-kv-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+    font-size: 0.85rem;
+}
+
+.ddx-kv-row > span:first-child {
+    color: rgb(170, 170, 170);
+    white-space: nowrap;
+}
+
+.ddx-kv-row > span:last-child {
+    text-align: right;
+    word-break: break-word;
+}
+
+.ddx-toggle {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.6rem;
+    font-size: 0.9rem;
+    line-height: 1.35;
+    cursor: pointer;
+}
+
+.ddx-check {
+    margin-top: 0.15rem;
+    accent-color: rgb(var(--primary-color));
+    width: 1rem;
+    height: 1rem;
+    flex-shrink: 0;
+}
+
+/* ---------- storage ---------- */
+
+.ddx-storage-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    max-height: 40vh;
+    overflow-y: auto;
+    scrollbar-width: thin;
+    padding-right: 0.25rem;
+}
+
+.ddx-storage-row {
+    display: grid;
+    grid-template-columns: 11rem 1fr 4.5rem 7rem;
+    align-items: center;
+    gap: 0.6rem;
+    font-size: 0.85rem;
+    padding: 0.3rem 0.4rem;
+    border-radius: 0.6rem;
+}
+
+.ddx-storage-row:hover {
+    background: rgba(255, 255, 255, 0.05);
+}
+
+.ddx-storage-name {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.ddx-storage-bar {
+    height: 0.45rem;
+    background: rgba(255, 255, 255, 0.08);
+    border-radius: 0.25rem;
+    overflow: hidden;
+}
+
+.ddx-storage-fill {
+    height: 100%;
+    background: rgb(var(--primary-color));
+    border-radius: 0.25rem;
+}
+
+.ddx-storage-size {
+    text-align: right;
+    color: rgb(210, 210, 210);
+    font-variant-numeric: tabular-nums;
+}
+
+.ddx-mini {
+    font-family: "Aller", sans-serif;
+    font-size: 0.75rem;
+    color: white;
+    background: rgba(255, 255, 255, 0.1);
+    border: none;
+    border-radius: 0.6rem;
+    padding: 0.3rem 0.5rem;
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.ddx-mini:hover:not(:disabled) {
+    background: rgba(var(--primary-color), 0.35);
+}
+
+.ddx-mini:disabled {
+    opacity: 0.35;
+    cursor: default;
+}
+
+/* ---------- toast ---------- */
+
+.ddx-toast {
+    position: absolute;
+    left: 50%;
+    bottom: 1.5rem;
+    transform: translate(-50%, 1rem);
+    max-width: 34rem;
+    z-index: 60;
+    font-family: "Aller", sans-serif;
+    font-size: 0.9rem;
+    color: white;
+    background: rgba(15, 15, 15, 0.9);
+    backdrop-filter: blur(10px);
+    border-radius: 1rem;
+    padding: 0.6rem 1.1rem;
+    box-shadow: rgba(0, 0, 0, 0.5) 0 0 15px, inset rgba(var(--primary-color), 0.5) 0 0 0 1px;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity ease-out 0.2s, transform ease-out 0.2s;
+}
+
+.ddx-toast[data-kind="error"] {
+    box-shadow: rgba(0, 0, 0, 0.5) 0 0 15px, inset rgba(255, 110, 110, 0.7) 0 0 0 1px;
+}
+
+.ddx-toast-visible {
+    opacity: 1;
+    transform: translate(-50%, 0);
+}
+
+/* ---------- drop overlay ---------- */
+
+.ddx-drop {
+    position: absolute;
+    inset: 0;
+    z-index: 70;
+    display: grid;
+    place-items: center;
+    background: rgba(0, 0, 0, 0.45);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity ease-out 0.15s;
+}
+
+.ddx-drop-visible {
+    opacity: 1;
+}
+
+.ddx-drop-box {
+    padding: 2.5rem 4rem;
+    border: 3px dashed rgb(var(--primary-color));
+    border-radius: 2rem;
+    background: rgba(15, 15, 15, 0.8);
+    text-align: center;
+    font-family: "Aller", sans-serif;
+    color: white;
+}
+
+.ddx-drop-title {
+    font-size: 2rem;
+    font-weight: bold;
+    text-shadow: rgb(var(--primary-color)) 0 0 12px;
+}
+
+.ddx-drop-sub {
+    margin-top: 0.4rem;
+    font-size: 0.95rem;
+    color: rgb(200, 200, 200);
+}

@@ -92,6 +92,8 @@ import DOMBatch from "./core/fragment/DOMBatch";
 import {getCurrentWindow} from "@tauri-apps/api/window";
 import Optional from "./core/utils/Optional";
 import WaitInterval from "./core/utils/WaitInterval";
+import * as Extras from "./core/extras/Extras";
+import * as Library from "./core/extras/Library";
 
 // ----- EXTERNAL ------- //
 import {Base64} from 'js-base64';
@@ -551,6 +553,14 @@ async function importMod(path) {
     }
     if (selectedPath != null) {
 	if (supportedModPackage(selectedPath)) {
+	    if (!await Extras.confirmNotDuplicate(selectedPath)) {
+		if (!Hud.isVoid(DownloadsManager.getDownload(selectedPath))) {
+		    DownloadsManager.complete(selectedPath)
+		}
+		alertPath = undefined;
+		showContainers(true)
+		return
+	    }
 	    try {
 			await invoke("import_mod", {
 				path: selectedPath
@@ -806,6 +816,7 @@ async function requestDirectory(directoryPath = undefined) {
 		if (finished_mods === mods_to_complete) {
 		    resolve2()
 		    docFrag.finalize()
+		    Extras.onLibraryLoaded()
 
 		    Hud.setLoadingBar(100)
 		    Hud.ofId("nummods").textContent = working_mods_count.toString();
@@ -891,7 +902,12 @@ async function addMod(name) {
 	executable: undefined,
 	credits: undefined,
 	pinned: false,
-	last_played: -1
+	last_played: -1,
+	rating: 0,
+	status: "",
+	reddit: "",
+	save_dir: undefined,
+	gdrive_synced: ""
     }
 
     let gameExePath;
@@ -1081,7 +1097,15 @@ async function addMod(name) {
 	preload: {},
 	isFavorite: configData.favorite,
 	nameId: name.toLowerCase(),
-	getOrder: () => configData.pinned ? prefixCharacterIndex - 244 : (configData.favorite ? prefixCharacterIndex - 122 : prefixCharacterIndex),
+	getOrder: () => {
+	    const base = Library.rankOf(name, prefixCharacterIndex);
+	    return configData.pinned ? base - 2000000 : (configData.favorite ? base - 1000000 : base);
+	},
+	getConfig: () => configData,
+	update: async (patch) => {
+	    Object.assign(configData, patch);
+	    await saveModData();
+	},
 	preloadImages: async () => {
 	    const list = launcher.getFunctions()
 	    let images = 0;
@@ -1147,6 +1171,7 @@ async function addMod(name) {
 	    await saveModData();
 	},
 	open: async () => {
+	    await Extras.beforeGameLaunch(launcher)
 	    await Logger.sendEvent("game_launch", {
 		mod: name
 	    })
@@ -1239,7 +1264,10 @@ async function addMod(name) {
 	    removeModLaunchedFlag();
 	    await saveModData();
 	    await saveConfig()
+	    Library.apply()
 	    await launcher.getFunctions().leftClick();
+	    Extras.afterGameClosed(launcher).then(_ => {
+	    })
 	},
 	leftClick: async () => {
 	    let taskPromise;
@@ -1557,6 +1585,8 @@ function updateDisplayInfo(mod, author, space, time, renpy, lastTime) {
 	Hud.hide("cover-down");
 	Hud.ofId("modinfo").innerHTML = "<span style=\"font-family: Icon,serif;\">&#62038;</span><input class='author-header' autocomplete='off' spellcheck='false' id='authinput' placeholder='" + author + "'><span style=\"font-family: Icon; padding-left: 20px;\">&#60755;</span> " + space + " <span style=\"font-family: Icon; padding-left: 20px;\">&#61966;</span> " + time + " <span style=\"font-family: Icon; padding-left: 20px;\">&#61974;</span> " + lastTime;
 	Hud.ofId("authinput").style.width = Math.min(getTextWidth(author, "normal " + AUTHOR_INPUT_SIZE + "rem Aller"), 150) + "px"
+	Extras.showMeta(mod).then(_ => {
+	})
 	if (space !== "Reading...") {
 	    Hud.ofId("authinput").addEventListener("input", async (e) => {
 		Hud.ofId("authinput").style.width = Math.min(getTextWidth(e.target.value, "normal " + AUTHOR_INPUT_SIZE + "rem Aller"), 150) + "px"
@@ -1574,6 +1604,7 @@ function updateDisplayInfo(mod, author, space, time, renpy, lastTime) {
 	}
     } else {
 	currentEntry = STRINGS.EMPTY
+	Extras.hideMeta()
 	setCover(currentBackgroundCover).then(() => {
 	})
 	let min = Math.floor(totalPlayTime / 60000);
@@ -2246,6 +2277,7 @@ async function setupIPCListeners(onLoadStartTime) {
 	Logger.log("Imported: " + alertPath + " AT: " + goal + " with URL: " + url)
 
 	Hud.ofId("modlist").appendChild(await addMod(goal))
+	Library.apply()
 
 	Hud.hide("loader")
 	Hud.show("main")
@@ -2605,6 +2637,13 @@ async function setupIPCListeners(onLoadStartTime) {
  * @returns {Promise<void>}
  */
 async function setupHTMListeners(onLoadStartTime) {
+    await Extras.init({
+	getCurrentEntry: () => currentEntry,
+	getLocalPath: () => localPath,
+	getProgramConfig: () => localConfig.config,
+	saveProgramConfig: saveConfig,
+    })
+
     Hud.onClick("save-profile", async () => {
 	Hud.hide("profile-bg")
 	await saveProfile();

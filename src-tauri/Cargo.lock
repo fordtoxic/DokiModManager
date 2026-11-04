@@ -1270,6 +1270,7 @@ dependencies = [
 name = "dokimodmanager"
 version = "1.8.0"
 dependencies = [
+ "base64 0.22.1",
  "dirs 6.0.0",
  "discord-rpc-client",
  "futures-util",
@@ -1300,6 +1301,7 @@ dependencies = [
  "unarc-rs",
  "warpalib",
  "window-vibrancy",
+ "zip",
 ]
 
 [[package]]
@@ -4636,6 +4638,7 @@ dependencies = [
  "rustls-platform-verifier",
  "serde",
  "serde_json",
+ "serde_urlencoded",
  "sync_wrapper",
  "tokio",
  "tokio-rustls",
