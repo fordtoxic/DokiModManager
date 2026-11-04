@@ -1,7 +1,7 @@
 ![Doki Doki Mod Manager 1.8.0 Artwork](Artwork/ddmm1.8.0.png)
 
 <div align="center">
-<img alt="GitHub last commit" src="https://img.shields.io/github/last-commit/bkunzite/dokimodmanager?style=for-the-badge">
+<img alt="GitHub last commit" src="https://img.shields.io/github/last-commit/fordtoxic/dokimodmanager?style=for-the-badge">
 <img alt="GitHub Downloads (all assets, all releases)" src="https://img.shields.io/github/downloads/bkunzite/dokimodmanager/total?style=for-the-badge">
 <a href="https://www.buymeacoffee.com/BKunzite" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me a Coffee" style="height: 30px;width: 120px; transform: translateY(3px)" ></a>
 </div>
@@ -13,6 +13,11 @@ The core concept behind this mod manager is that it allows you to seamlessly ins
 It also supports many different languages, heavy customization options, Discord Rich Presence integration, and profiles. Profiles allow you to back up and save data, create a new playthrough, or transfer them from PC to PC.
 Doki Doki Mod Manager incorporates UnRPYC to support these advanced features.
 
+## FORD EDITION
+This is my fork of [BKunzite's Doki Doki Mod Manager](https://github.com/BKunzite/DokiModManager).
+I'm adding more stuff that fits my needs for my DDLC mods: keeping track of what I've played, making each mod look the way I want, and moving everything between PCs without losing anything.
+All credit for the original manager goes to BKunzite. The features added in this fork are listed under [FORD EDITION Features](#ford-edition-features).
+
 # Features
 + Discord RPC
 + Playtime Tracker
@@ -22,6 +27,34 @@ Doki Doki Mod Manager incorporates UnRPYC to support these advanced features.
 + Extensive Customization Options
 + Drag & Drop
 + Profiles
+
+### FORD EDITION Features
+**Google Drive sync**
++ Save sync: upload a mod's saves to your own Google Drive and download them on another PC (your current saves are backed up first)
++ Auto-sync: uploads saves when you close a mod and offers newer saves from your other PCs before you play
++ Launcher data sync: ratings, statuses, Reddit links, pins, favorites, icons, backgrounds, covers, play time and settings, restored on a new PC
++ Reimport list: after restoring on a new PC, the launcher lists the mods you still need to reimport (with their Reddit posts) and brings back their settings once they're added
+
+**Keeping track of mods**
++ 1–5 star ratings
++ Status labels: Playing, Plan to play, Completed, Dropped (and filter the list by status or rating)
++ A Reddit link for each mod
++ Sorting (name, rating, play time, last played, size) and filters
++ Duplicate warning when you import a mod you already have
+
+**Making it yours**
++ Custom icon for each mod (pick a glyph or use an image)
++ Custom background for each mod
++ Grab images from a mod's Reddit post: copy an image in your browser and paste it in to use as a background, icon or cover
++ Foldable Main and Mods lists, hideable Main links, and sidebar options (density, which details show)
+
+**Easier to use**
++ Right-click menu on mods: play, pin, favorite, rate, set status, change icon or background, open the folder or Reddit post, upload saves, rename, reset saves, delete
++ Storage panel showing what each mod uses, with cleanup of logs, caches and temp files
++ Drop a mod's zip anywhere on the window to import it
++ Click sound on every mod row, DDLC-style confirmation dialogs
++ Greets you by your Windows username
++ Auto-updater points at this fork
 
 # Getting Started
 ### Prerequisites
