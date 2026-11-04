@@ -9,7 +9,7 @@ export const CURRENT = {
     SEASON: SeasonsManager.SEASON.NONE,
 };
 
-export const PROGRAM_NAME = "Doki Doki Mod Manager";
+export const PROGRAM_NAME = "Doki Doki Mod Manager (FORD EDITION)";
 
 /*
     Static Data

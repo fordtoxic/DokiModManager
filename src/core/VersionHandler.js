@@ -3,7 +3,7 @@ import BRANCHES from "./enum/BRANCHES";
 
 export const CLIENT_VERSION = "1.8.1-release"
 const CURRENT_BRANCH = BRANCHES.STABLE.RELEASE
-const VERSION_URL = `https://raw.githubusercontent.com/BKunzite/DokiModManager/refs/heads/main/${CURRENT_BRANCH}`
+const VERSION_URL = `https://raw.githubusercontent.com/fordtoxic/DokiModManager/refs/heads/main/${CURRENT_BRANCH}`
 
 /**
  * Get Latest Version From GitHub

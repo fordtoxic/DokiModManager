@@ -65,7 +65,7 @@ static COPY_POOL: OnceLock<ThreadPool> = OnceLock::new();
 static DOWNLOAD_STATE: OnceLock<Mutex<HashMap<String, bool>>> = OnceLock::new();
 static CURRENT_DIR: LazyLock<Mutex<PathBuf>> = LazyLock::new(|| Mutex::new(PathBuf::new()));
 #[cfg(not(target_os = "windows"))]
-static RELEASES_URL: &str = "https://github.com/BKunzite/DokiModManager/releases";
+static RELEASES_URL: &str = "https://github.com/fordtoxic/DokiModManager/releases";
 
 #[cfg(target_os = "linux")]
 static PENDING_FALLBACKS: OnceLock<Mutex<HashMap<String, oneshot::Sender<()>>>> = OnceLock::new();
@@ -1650,6 +1650,16 @@ fn get_host_name() -> String {
         .into_string()
         .unwrap_or_else(|_| "Monika".to_string())
 }
+
+/// The signed-in user's name, for the home screen greeting.
+#[tauri::command]
+fn get_user_name() -> String {
+    env::var("USERNAME")
+        .or_else(|_| env::var("USER"))
+        .ok()
+        .filter(|name| !name.trim().is_empty())
+        .unwrap_or_else(get_host_name)
+}
 #[tauri::command]
 async fn update_exe(app: AppHandle) {
     #[cfg(target_os = "windows")]
@@ -2168,6 +2178,7 @@ pub async fn run() {
             rpa_data,
             extract_game_script,
             get_host_name,
+            get_user_name,
             open_webview,
             goto_main,
             sync_log,
@@ -2180,8 +2191,15 @@ pub async fn run() {
             gdrive::gdrive_remote_info,
             gdrive::gdrive_upload,
             gdrive::gdrive_download,
+            gdrive::launcher::gdrive_launcher_info,
+            gdrive::launcher::gdrive_launcher_upload,
+            gdrive::launcher::gdrive_launcher_restore,
+            gdrive::launcher::launcher_take_pending,
+            gdrive::launcher::launcher_pending_list,
+            gdrive::launcher::launcher_forget_pending,
             gdrive::ddx_measure,
-            gdrive::ddx_remove
+            gdrive::ddx_remove,
+            gdrive::ddx_fetch_images
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

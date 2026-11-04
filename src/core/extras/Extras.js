@@ -1,13 +1,17 @@
-import {invoke} from "@tauri-apps/api/core";
+import {convertFileSrc, invoke} from "@tauri-apps/api/core";
 import {listen} from "@tauri-apps/api/event";
-import {confirm} from "@tauri-apps/plugin-dialog";
+import {confirm, notify} from "./Dialog";
 import {openUrl} from "@tauri-apps/plugin-opener";
+import {open as openFileDialog} from "@tauri-apps/plugin-dialog";
+import {mkdir, readFile, remove, writeFile} from "@tauri-apps/plugin-fs";
 import {isExist} from "tauri-plugin-fs-pro-api";
 import {getLauncher, getLaunchers} from "../Launchers";
 import {fileTerminator, terminatePath} from "../utils/FileSystem";
 import {WARN_GENERIC_DATA_PATHS} from "../Constants";
 import Logger from "../utils/Logger";
+import Hud from "../utils/HTMLHelper";
 import * as Library from "./Library";
+import * as Sidebar from "./Sidebar";
 import "./extras.css";
 
 /**
@@ -65,21 +69,14 @@ function currentLauncher() {
 
 // ---------- toast ----------
 
-let toastTimer = null;
-
 export function toast(message, kind = "info", ms = 3500) {
-    const node = document.getElementById("ddx-toast");
-    if (!node) return;
-    node.textContent = message;
-    node.dataset.kind = kind;
-    node.classList.add("ddx-toast-visible");
-    clearTimeout(toastTimer);
-    if (ms > 0) toastTimer = setTimeout(() => node.classList.remove("ddx-toast-visible"), ms);
+    notify(message, kind, ms);
 }
 
 // ---------- modal ----------
 
 function openModal(title, build, wide = false) {
+    stopPasteListening();
     const bg = document.getElementById("ddx-modal-bg");
     const modal = bg.querySelector(".ddx-modal");
     modal.classList.toggle("ddx-modal-wide", wide);
@@ -91,6 +88,7 @@ function openModal(title, build, wide = false) {
 }
 
 function closeModal() {
+    stopPasteListening();
     document.getElementById("ddx-modal-bg")?.classList.add("ddx-hidden");
 }
 
@@ -123,13 +121,17 @@ export async function showMeta(entry) {
     reddit.classList.toggle("ddx-chip-empty", !hasLink);
     reddit.title = hasLink ? config.reddit : "Save this mod's Reddit post";
     document.getElementById("ddx-reddit-edit").classList.toggle("ddx-hidden", !hasLink);
+    document.getElementById("ddx-grab-reddit")?.classList.toggle("ddx-hidden", !hasLink);
     const cloud = document.getElementById("ddx-cloud");
     cloud.title = config.gdrive_synced ? "Last synced " + formatDate(config.gdrive_synced) : "Google Drive saves";
     meta.classList.remove("ddx-hidden");
+    applyModBackground(config);
 }
 
 export function hideMeta() {
     document.getElementById("ddx-meta")?.classList.add("ddx-hidden");
+    // The home page sets its own background right after this.
+    homeBackground = null;
 }
 
 async function setRating(value) {
@@ -203,6 +205,13 @@ function openRedditEditor() {
             el("p", {class: "ddx-text", text: "Paste the link to this mod's Reddit post. Leave it empty to remove it."}),
             input,
             error,
+            config.reddit ? el("button", {
+                class: "ddx-link", text: "Grab images from this post",
+                onClick: () => {
+                    closeModal();
+                    grabRedditImages(modName);
+                },
+            }) : null,
             el("div", {class: "ddx-actions"}, [
                 el("button", {
                     class: "ddx-button ddx-button-ghost",
@@ -275,7 +284,7 @@ async function refreshDriveStatus() {
     } catch (e) {
         Logger.warn("Drive status failed: " + e);
     }
-    document.getElementById("ddx-cloud-pill")?.classList.toggle("ddx-pill-active", driveStatus.signed_in);
+    document.getElementById("ddx-side-cloud")?.classList.toggle("ddx-side-active", driveStatus.signed_in);
     return driveStatus;
 }
 
@@ -331,6 +340,7 @@ export async function afterGameClosed(launcher) {
     } catch (e) {
         if (!String(e).includes("no save files")) toast("Auto-sync failed: " + e, "error", 6000);
     }
+    await autoBackupLauncher();
 }
 
 function openModCloud() {
@@ -511,11 +521,12 @@ function openDriveSettings() {
                 el("div", {class: "ddx-kv-row"}, [el("span", {text: "Signed in as"}), el("span", {text: s.email ?? "unknown"})]),
                 el("div", {class: "ddx-kv-row"}, [el("span", {text: "Drive folder"}), el("span", {text: "Doki Doki Mod Manager Saves"})]),
             ]),
+            launcherDataSection(),
             el("label", {class: "ddx-toggle"}, [
                 auto,
                 el("span", {}, [
                     el("b", {text: "Auto-sync"}),
-                    el("span", {class: "ddx-subtle", text: " — upload saves when you close a mod, and offer newer saves from your other PCs before you play"}),
+                    el("span", {class: "ddx-subtle", text: " — upload saves when you close a mod, back up launcher data as it changes, and offer newer copies from your other PCs"}),
                 ]),
             ]),
             el("div", {class: "ddx-actions"}, [
@@ -530,6 +541,233 @@ function openDriveSettings() {
             ]),
         );
     });
+}
+
+// ---------- launcher data (settings, ratings, icons, covers) ----------
+
+const LAUNCHER_BACKUP_EVERY = 10 * 60 * 1000;
+let launcherTimer = null;
+let launcherBusy = false;
+
+/** Backs up launcher data when it changed. Never overwrites a newer backup from another PC. */
+async function autoBackupLauncher() {
+    if (!driveStatus.signed_in || !driveStatus.auto_sync || launcherBusy) return;
+    launcherBusy = true;
+    try {
+        const result = await invoke("gdrive_launcher_upload", {force: false});
+        if (result.status === "uploaded") Logger.info("Launcher data backed up to Google Drive");
+    } catch (e) {
+        Logger.warn("Launcher backup failed: " + e);
+    } finally {
+        launcherBusy = false;
+    }
+}
+
+async function backupLauncherNow(remote, syncedTime) {
+    if (remote && remote.modified_time !== syncedTime) {
+        const yes = await confirm(
+            "Google Drive has launcher data from " + (remote.device ?? "another PC") + " (" + formatDate(remote.modified_time) + ") that this PC hasn't restored.\n\n" +
+            "Backing up now replaces it with this PC's ratings, icons, covers and settings.",
+            {title: "Replace the Drive backup?", okLabel: "Replace it", cancelLabel: "Cancel", danger: true},
+        );
+        if (!yes) return;
+    }
+    toast("Backing up launcher data…", "info", 0);
+    await invoke("gdrive_launcher_upload", {force: true});
+    toast("Launcher data backed up to Google Drive", "ok");
+}
+
+async function restoreLauncher() {
+    toast("Restoring launcher data…", "info", 0);
+    const report = await invoke("gdrive_launcher_restore");
+    toast("Launcher data restored", "ok");
+    showRestoreReport(report);
+}
+
+/** What was restored, which mods still need installing, then a reload to show it. */
+function showRestoreReport(report) {
+    openModal("Launcher data restored", body => {
+        const applied = report.mods_applied.length;
+        body.append(el("p", {
+            class: "ddx-text",
+            text: "Restored your launcher settings" +
+                (applied ? ", and ratings, icons and backgrounds for " + applied + " mod" + (applied === 1 ? "" : "s") : "") +
+                (report.covers ? ", plus " + report.covers + " cover image" + (report.covers === 1 ? "" : "s") : "") + ".",
+        }));
+        if (report.mods_waiting.length > 0) body.append(...reimportList(report.mods_waiting));
+        body.append(
+            el("p", {class: "ddx-subtle", text: "What was here before is saved in store\\launcher_backups."}),
+            el("div", {class: "ddx-actions"}, [
+                el("button", {class: "ddx-button", text: "Reload launcher", onClick: () => location.reload()}),
+            ]),
+        );
+    }, true);
+}
+
+/** The "reimport these mods" explanation and list, shared by the restore report and the reminder. */
+function reimportList(mods) {
+    const many = mods.length !== 1;
+    return [
+        el("p", {
+            class: "ddx-text",
+            text: (many ? "These " + mods.length + " mods aren't" : "This mod isn't") + " on this PC. " +
+                "Reimport " + (many ? "them" : "it") + " with Import Mod, using the same zip as before. " +
+                "Ratings, icons, backgrounds and play time come back by themselves once the mod is added.",
+        }),
+        el("ul", {class: "ddx-waiting-list"}, mods.map(mod => el("li", {}, [
+            el("span", {text: mod.name}),
+            mod.reddit ? el("button", {class: "ddx-link", text: "Reddit post", onClick: () => openUrl(mod.reddit)}) : null,
+        ]))),
+    ];
+}
+
+let pendingMods = [];
+
+/** Reminder in the sidebar while restored mods still need reimporting. */
+export async function refreshReimportReminder() {
+    try {
+        pendingMods = await invoke("launcher_pending_list");
+    } catch (e) {
+        pendingMods = [];
+    }
+    const button = document.getElementById("ddx-side-reimport");
+    if (!button) return;
+    button.classList.toggle("ddx-hidden", pendingMods.length === 0);
+    const label = button.querySelector(".ddx-reimport-label");
+    if (label) label.textContent = "Reimport " + pendingMods.length + " mod" + (pendingMods.length === 1 ? "" : "s");
+}
+
+function openReimport() {
+    if (pendingMods.length === 0) return;
+    openModal("Reimport your mods", body => {
+        body.append(
+            ...reimportList(pendingMods),
+            el("div", {class: "ddx-actions"}, [
+                el("button", {
+                    class: "ddx-button ddx-button-ghost", text: "Forget these", onClick: async () => {
+                        const yes = await confirm(
+                            "Stop reminding you about these mods? Their restored ratings, icons and play time are removed from this PC.",
+                            {title: "Forget these mods?", okLabel: "Forget them", cancelLabel: "Keep them", danger: true},
+                        );
+                        if (!yes) return;
+                        await invoke("launcher_forget_pending", {names: pendingMods.map(m => m.name)});
+                        await refreshReimportReminder();
+                        closeModal();
+                    },
+                }),
+                el("button", {
+                    class: "ddx-button", text: "Import mod", onClick: () => {
+                        closeModal();
+                        document.getElementById("import")?.dispatchEvent(new MouseEvent("mouseup", {bubbles: true, button: 0}));
+                    },
+                }),
+            ]),
+        );
+    }, true);
+}
+
+const DRIVE_API_PAGE = "https://console.cloud.google.com/apis/library/drive.googleapis.com";
+
+/** Shows a Drive error, with a shortcut when the fix is enabling the Drive API. */
+function showDriveProblem(container, error) {
+    const text = String(error);
+    container.replaceChildren(el("p", {class: "ddx-error", text}));
+    if (text.includes("Google Drive API is turned off")) {
+        const project = text.match(/project \((\d+)\)/)?.[1];
+        const url = DRIVE_API_PAGE + (project ? "?project=" + project : "");
+        container.append(el("button", {class: "ddx-link", text: "Open the Google Drive API page", onClick: () => openUrl(url)}));
+    }
+}
+
+/** The "Launcher data" part of the Google Drive panel. */
+function launcherDataSection() {
+    const state = el("span", {text: "Checking…"});
+    const problem = el("div", {class: "ddx-drive-problem"});
+    const backup = el("button", {class: "ddx-button ddx-button-ghost", text: "Back up now", disabled: true});
+    const restore = el("button", {class: "ddx-button ddx-button-ghost", text: "Restore from Drive", disabled: true});
+    let info = {remote: null, synced_time: null};
+
+    const refresh = async () => {
+        try {
+            info = await invoke("gdrive_launcher_info");
+            const remote = info.remote;
+            if (!remote) {
+                state.textContent = "Not backed up yet";
+            } else {
+                const newer = remote.modified_time !== info.synced_time;
+                state.textContent = formatDate(remote.modified_time) + (remote.device ? " from " + remote.device : "") +
+                    (newer ? " (not on this PC yet)" : "");
+            }
+            backup.disabled = false;
+            restore.disabled = !remote;
+            problem.replaceChildren();
+        } catch (e) {
+            state.textContent = "Couldn't check";
+            showDriveProblem(problem, e);
+            backup.disabled = false;
+        }
+    };
+    const run = async action => {
+        backup.disabled = restore.disabled = true;
+        try {
+            await action();
+        } catch (e) {
+            toast(String(e), "error", 6000);
+        }
+        await refresh();
+    };
+    backup.addEventListener("click", () => run(() => backupLauncherNow(info.remote, info.synced_time)));
+    restore.addEventListener("click", () => run(async () => {
+        const yes = await confirm(
+            "Bring back ratings, statuses, Reddit links, icons, backgrounds, covers, play time and launcher settings from " +
+            (info.remote?.device ?? "Google Drive") + "?\n\nWhat's on this PC now is backed up first.",
+            {title: "Restore launcher data?", okLabel: "Restore", cancelLabel: "Cancel"},
+        );
+        if (yes) await restoreLauncher();
+    }));
+    refresh();
+
+    return el("div", {class: "ddx-launcher-sync"}, [
+        el("div", {class: "ddx-kv"}, [
+            el("div", {class: "ddx-kv-row"}, [el("span", {text: "Launcher data"}), state]),
+        ]),
+        el("p", {class: "ddx-subtle", text: "Ratings, statuses, Reddit links, pins, icons, backgrounds, covers, play time and launcher settings. The mods themselves aren't uploaded."}),
+        problem,
+        el("div", {class: "ddx-actions"}, [backup, restore]),
+    ]);
+}
+
+/**
+ * After the library loads: offer a newer launcher backup from another PC
+ * (or to a fresh install), then keep backing up while auto-sync is on.
+ */
+let launcherSyncStarted = false;
+
+async function startLauncherSync() {
+    if (launcherSyncStarted || !driveStatus.signed_in) return;
+    launcherSyncStarted = true;
+    try {
+        const info = await invoke("gdrive_launcher_info");
+        const remote = info.remote;
+        if (remote && remote.modified_time !== info.synced_time) {
+            const yes = await confirm(
+                "Google Drive has launcher data from " + (remote.device ?? "another PC") + " (" + formatDate(remote.modified_time) + "): " +
+                "ratings, icons, backgrounds, covers and settings.\n\n" +
+                (info.synced_time ? "It's newer than what this PC has. Restore it?" : "Restore it on this PC?") +
+                " What's here now is backed up first.",
+                {title: "Restore launcher data?", okLabel: "Restore", cancelLabel: "Not now"},
+            );
+            if (yes) {
+                await restoreLauncher();
+                return;
+            }
+        }
+    } catch (e) {
+        Logger.warn("Launcher data check failed: " + e);
+    }
+    await autoBackupLauncher();
+    clearInterval(launcherTimer);
+    launcherTimer = setInterval(autoBackupLauncher, LAUNCHER_BACKUP_EVERY);
 }
 
 // ---------- storage ----------
@@ -663,6 +901,549 @@ function openStorage() {
     }, true);
 }
 
+// ---------- per-mod icon and background ----------
+
+const ICONS = [
+    ["Heart", 60943], ["Filled heart", 60938], ["Quill", 61514], ["Pen", 61406], ["Pencil", 61408],
+    ["Open book", 60123], ["Book", 60115], ["Bookmark", 60133], ["Star", 61835], ["Sparkles", 62317],
+    ["Magic", 61162], ["Moon", 61301], ["Sun", 61887], ["Flower", 62475], ["Plant", 61447],
+    ["Leaf", 61091], ["Cupcake", 60187], ["Tea", 60422], ["Knife", 61051], ["Ghost", 60853],
+    ["Smiling ghost", 60855], ["Skull", 61770], ["Music", 61315], ["Headphones", 60933], ["Gamepad", 60843],
+    ["Sword", 61903], ["Fire", 60723], ["Cloud", 60317], ["Rain", 61526], ["Umbrella", 62019],
+    ["Rainbow", 61524], ["Happy", 60557], ["Sad", 60564], ["Unhappy", 60566], ["Bear", 60088],
+    ["Mind", 61232], ["Eye", 60597], ["Key", 61039], ["Open door", 60492], ["Home", 60970],
+    ["School", 62298], ["Picture", 61003], ["Folder", 60778], ["Film", 60705], ["Chat", 60255],
+    ["Computer", 60362], ["Bug", 60167], ["Rocket", 61590], ["Planet", 62367], ["Mouse ears", 61268],
+];
+
+const IMAGE_FILTER = [{name: "Images", extensions: ["png", "jpg", "jpeg", "webp", "gif"]}];
+
+function artFolder() {
+    return ctx.getLocalPath() + fileTerminator + terminatePath("store\\mod_art");
+}
+
+function isManagedArt(path) {
+    return !!path && path.startsWith(artFolder());
+}
+
+/** Copies an image into store\mod_art so it keeps working if the original moves. */
+async function copyArt(source, modName, kind) {
+    const folder = artFolder();
+    await mkdir(folder, {recursive: true});
+    const ext = (source.split(".").pop() || "png").toLowerCase();
+    const safe = modName.replace(/[^a-z0-9_-]+/gi, "_").slice(0, 40);
+    const target = folder + fileTerminator + safe + "-" + kind + "-" + Date.now() + "." + ext;
+    await writeFile(target, await readFile(source));
+    return target;
+}
+
+async function forgetArt(path) {
+    if (isManagedArt(path)) {
+        await remove(path).catch(() => {
+        });
+    }
+}
+
+function artUrl(path) {
+    return convertFileSrc(path);
+}
+
+function openIconPicker(name) {
+    const launcher = name ? getLauncher(name) : undefined;
+    if (!launcher) return;
+    const functions = launcher.getFunctions();
+    const current = functions.getConfig().icon;
+
+    const setIcon = async icon => {
+        if (current?.image && current.image !== icon?.image) await forgetArt(current.image);
+        await functions.update({icon});
+        Library.apply();
+        closeModal();
+    };
+
+    openModal("Icon for " + name, body => {
+        const grid = el("div", {class: "ddx-icon-grid", role: "listbox", "aria-label": "Icons"}, ICONS.map(([label, code]) => {
+            const button = el("button", {
+                class: "ddx-icon-choice" + (current?.glyph === code ? " ddx-icon-current" : ""),
+                title: label, "aria-label": label, role: "option",
+                "aria-selected": String(current?.glyph === code),
+                text: String.fromCodePoint(code),
+            });
+            button.addEventListener("click", () => setIcon({glyph: code}));
+            return button;
+        }));
+        body.append(
+            grid,
+            el("div", {class: "ddx-actions"}, [
+                el("button", {class: "ddx-button ddx-button-ghost", text: "Reset to default", onClick: () => setIcon(null)}),
+                el("button", {
+                    class: "ddx-button", text: "Use an image…", onClick: async () => {
+                        const picked = await openFileDialog({multiple: false, directory: false, filters: IMAGE_FILTER, title: "Choose an icon image"});
+                        if (!picked) return;
+                        try {
+                            await setIcon({image: await copyArt(picked, name, "icon")});
+                        } catch (e) {
+                            toast("Couldn't use that image: " + e, "error", 6000);
+                        }
+                    },
+                }),
+            ]),
+        );
+    }, true);
+}
+
+let homeBackground = null;
+
+/** Shows the current mod's own background, or puts the home background back. */
+function applyModBackground(config) {
+    const bg = document.getElementById("bg");
+    if (!bg) return;
+    if (config?.background) {
+        if (!homeBackground) {
+            homeBackground = {
+                image: bg.style.backgroundImage,
+                height: bg.style.height,
+                position: bg.style.backgroundPositionY,
+            };
+        }
+        bg.style.backgroundImage = 'url("' + artUrl(config.background) + '")';
+        bg.style.height = "100%";
+        bg.style.backgroundPositionY = "center";
+    } else if (homeBackground) {
+        bg.style.backgroundImage = homeBackground.image;
+        bg.style.height = homeBackground.height;
+        bg.style.backgroundPositionY = homeBackground.position;
+        homeBackground = null;
+    }
+    document.getElementById("ddx-remove-bg")?.classList.toggle("ddx-hidden", !config?.background);
+}
+
+async function chooseBackground() {
+    const launcher = currentLauncher();
+    if (!launcher) return;
+    const functions = launcher.getFunctions();
+    const picked = await openFileDialog({
+        multiple: false, directory: false, filters: IMAGE_FILTER, title: "Choose a background for " + functions.getName(),
+        defaultPath: ctx.getLocalPath() + fileTerminator + terminatePath("store\\images") + fileTerminator,
+    });
+    if (!picked) return;
+    try {
+        const old = functions.getConfig().background;
+        const path = await copyArt(picked, functions.getName(), "background");
+        await functions.update({background: path});
+        await forgetArt(old);
+        applyModBackground(functions.getConfig());
+        toast("Background set for " + functions.getName(), "ok");
+    } catch (e) {
+        toast("Couldn't use that image: " + e, "error", 6000);
+    }
+}
+
+async function removeBackground() {
+    const launcher = currentLauncher();
+    if (!launcher) return;
+    const functions = launcher.getFunctions();
+    const old = functions.getConfig().background;
+    await functions.update({background: ""});
+    await forgetArt(old);
+    applyModBackground(functions.getConfig());
+    toast("Background removed");
+}
+
+// ---------- grab images from a mod's Reddit post ----------
+
+const PASTE_TYPES = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp", "image/gif": "gif"};
+let pasteHandler = null;
+
+function stopPasteListening() {
+    if (pasteHandler) document.removeEventListener("paste", pasteHandler, true);
+    pasteHandler = null;
+}
+
+/** Saves a pasted picture into store\temp\reddit_images and returns its path. */
+async function savePastedImage(file) {
+    const ext = PASTE_TYPES[file.type];
+    if (!ext) throw new Error("That clipboard item isn't a PNG, JPG, WebP or GIF picture.");
+    if (file.size > 20 * 1024 * 1024) throw new Error("That picture is bigger than 20 MB.");
+    const folder = ctx.getLocalPath() + fileTerminator + terminatePath("store\\temp\\reddit_images");
+    await mkdir(folder, {recursive: true});
+    const path = folder + fileTerminator + "paste-" + Date.now() + "-" + Math.floor(Math.random() * 1e6) + "." + ext;
+    await writeFile(path, new Uint8Array(await file.arrayBuffer()));
+    return path;
+}
+
+/** One picture in the grabber grid, with buttons to use it for this mod. */
+function grabbedImageCard(name, path) {
+    const functions = getLauncher(name).getFunctions();
+    const done = (button, label) => {
+        button.textContent = label;
+        button.disabled = true;
+    };
+    const guard = action => async event => {
+        try {
+            await action(event.currentTarget);
+        } catch (e) {
+            toast(String(e), "error", 6000);
+        }
+    };
+    const useBackground = el("button", {class: "ddx-mini", text: "Background"});
+    const useIcon = el("button", {class: "ddx-mini", text: "Icon"});
+    const useCover = el("button", {class: "ddx-mini", text: "Cover"});
+    useBackground.addEventListener("click", guard(async button => {
+        const old = functions.getConfig().background;
+        await functions.update({background: await copyArt(path, name, "background")});
+        await forgetArt(old);
+        if (ctx.getCurrentEntry() === name) applyModBackground(functions.getConfig());
+        done(button, "Background set");
+    }));
+    useIcon.addEventListener("click", guard(async button => {
+        const old = functions.getConfig().icon?.image;
+        await functions.update({icon: {image: await copyArt(path, name, "icon")}});
+        await forgetArt(old);
+        Library.apply();
+        done(button, "Icon set");
+    }));
+    useCover.addEventListener("click", guard(async button => {
+        const coverId = await ctx.addCover(path);
+        if (coverId >= 0) {
+            if (ctx.getCurrentEntry() === name) await functions.setCover(coverId);
+            else await functions.update({coverId});
+        }
+        done(button, "Cover set");
+    }));
+    return el("figure", {class: "ddx-grab-item"}, [
+        el("img", {src: convertFileSrc(path), alt: "Picture for " + name, loading: "lazy"}),
+        el("figcaption", {class: "ddx-grab-actions"}, [useBackground, useIcon, useCover]),
+    ]);
+}
+
+/**
+ * Get pictures from a mod's Reddit post: open it in your own browser, copy a
+ * picture (or its link) and paste it here. Reddit blocks the app from reading
+ * posts directly, so the pictures come through the clipboard instead.
+ */
+function grabRedditImages(name) {
+    const launcher = name ? getLauncher(name) : undefined;
+    if (!launcher) return;
+    const link = launcher.getFunctions().getConfig().reddit;
+
+    openModal("Images from Reddit · " + name, body => {
+        const grid = el("div", {class: "ddx-grab-grid"});
+        const empty = el("p", {class: "ddx-grab-empty", text: "Pasted pictures show up here."});
+        const status = el("p", {class: "ddx-text ddx-grab-status", role: "status", "aria-live": "polite"});
+        const linkInput = el("input", {
+            class: "ddx-input", placeholder: "…or paste a picture link (i.redd.it, preview.redd.it, i.imgur.com)",
+            spellcheck: "false", autocomplete: "off",
+        });
+
+        const addPaths = paths => {
+            empty.remove();
+            for (const path of paths) grid.prepend(grabbedImageCard(name, path));
+        };
+        const addLinks = async text => {
+            const urls = text.split(/\s+/).filter(u => /^https:\/\//i.test(u));
+            if (urls.length === 0) return false;
+            status.textContent = "Downloading…";
+            try {
+                const images = await invoke("ddx_fetch_images", {urls});
+                if (images.length === 0) {
+                    status.textContent = "Couldn't download that. Only picture links from i.redd.it, preview.redd.it and i.imgur.com work, so try Copy image instead.";
+                } else {
+                    addPaths(images.map(i => i.path));
+                    status.textContent = "Added " + images.length + " picture" + (images.length === 1 ? "" : "s") + ".";
+                }
+            } catch (e) {
+                status.textContent = String(e);
+            }
+            return true;
+        };
+
+        pasteHandler = async event => {
+            const items = [...(event.clipboardData?.items ?? [])];
+            const files = items.filter(i => i.kind === "file" && i.type.startsWith("image/")).map(i => i.getAsFile()).filter(Boolean);
+            if (files.length > 0) {
+                event.preventDefault();
+                try {
+                    const paths = [];
+                    for (const file of files) paths.push(await savePastedImage(file));
+                    addPaths(paths);
+                    status.textContent = "Added " + paths.length + " picture" + (paths.length === 1 ? "" : "s") + ".";
+                } catch (e) {
+                    status.textContent = String(e);
+                }
+                return;
+            }
+            // Text pasted outside the link box: treat it as picture links
+            if (event.target !== linkInput) {
+                const text = event.clipboardData?.getData("text") ?? "";
+                if (text && await addLinks(text)) event.preventDefault();
+            }
+        };
+        document.addEventListener("paste", pasteHandler, true);
+
+        linkInput.addEventListener("keydown", async e => {
+            if (e.key === "Enter" && linkInput.value.trim()) {
+                await addLinks(linkInput.value);
+                linkInput.value = "";
+            }
+        });
+
+        body.append(
+            el("ol", {class: "ddx-steps"}, [
+                el("li", {}, [link
+                    ? el("button", {class: "ddx-link", text: "Open the post in your browser", onClick: () => openUrl(link)})
+                    : "Open the mod's Reddit post in your browser"]),
+                el("li", {}, ["Right-click a picture and choose ", el("b", {text: "Copy image"}), "."]),
+                el("li", {}, ["Come back here and press ", el("b", {text: "Ctrl+V"}), ". Repeat for as many pictures as you like."]),
+            ]),
+            linkInput,
+            status,
+            grid,
+            empty,
+            el("div", {class: "ddx-actions"}, [el("button", {class: "ddx-button", text: "Done", onClick: closeModal})]),
+        );
+    }, true);
+}
+
+// ---------- right-click menu on sidebar mods ----------
+
+function closeRowMenu() {
+    const menu = document.getElementById("ddx-row-menu");
+    if (!menu || menu.classList.contains("ddx-hidden")) return;
+    menu.classList.add("ddx-hidden");
+    menu.replaceChildren();
+}
+
+/** Opens a mod's page if it isn't the one showing, so page-based actions apply to it. */
+async function ensureOpen(name) {
+    if (ctx.getCurrentEntry() !== name) await getLauncher(name)?.getFunctions().leftClick();
+}
+
+/** Pin/favorite also update the open page's pin and heart; keep those on the open mod. */
+function restorePageMarkers() {
+    const current = currentLauncher();
+    if (!current) {
+        // Home page: no pin or heart is shown there
+        Hud.setPinned(false);
+        const heart = document.getElementById("covertext");
+        if (heart) heart.innerHTML = "";
+        return;
+    }
+    const config = current.getFunctions().getConfig();
+    Hud.setPinned(!!config.pinned);
+    Hud.setHeart(!!config.favorite);
+}
+
+async function updateMod(name, patch) {
+    const launcher = getLauncher(name);
+    if (!launcher) return;
+    await launcher.getFunctions().update(patch);
+    Library.apply();
+    if (ctx.getCurrentEntry() === name) await showMeta(name);
+}
+
+function openRowMenu(name, x, y) {
+    const launcher = getLauncher(name);
+    const menu = document.getElementById("ddx-row-menu");
+    if (!launcher || !menu) return;
+    // Not over an open panel or dialog: its actions would happen behind it
+    const dialogOpen = document.getElementById("ddx-dialog")?.classList.contains("ddx-hidden") === false;
+    if (isModalOpen() || dialogOpen) return;
+    const functions = launcher.getFunctions();
+    const config = functions.getConfig();
+    const icon = code => el("span", {class: "ddx-side-icon", text: String.fromCodePoint(code)});
+    const item = (code, label, action, extra = "") => el("button", {
+        class: "ddx-menu-item" + extra, role: "menuitem", onClick: async () => {
+            closeRowMenu();
+            try {
+                await action();
+            } catch (e) {
+                toast(String(e), "error", 6000);
+            }
+        },
+    }, [icon(code), " " + label]);
+    const divider = () => el("div", {class: "ddx-menu-divider", role: "separator"});
+
+    const stars = el("div", {class: "ddx-menu-row", role: "group", "aria-label": "Rating"}, [
+        el("span", {class: "ddx-menu-label", text: "Rate"}),
+        ...[1, 2, 3, 4, 5].map(n => el("button", {
+            class: "ddx-menu-star" + (n <= (config.rating ?? 0) ? " ddx-star-on" : ""),
+            text: "★", title: n + " star" + (n > 1 ? "s" : ""), "aria-label": n + " stars",
+            onClick: async () => {
+                closeRowMenu();
+                await updateMod(name, {rating: config.rating === n ? 0 : n});
+            },
+        })),
+    ]);
+    const statuses = el("div", {class: "ddx-menu-row ddx-menu-chips", role: "group", "aria-label": "Status"},
+        Library.STATUSES.filter(s => s.id).map(s => el("button", {
+            class: "ddx-menu-chip" + (config.status === s.id ? " ddx-menu-chip-on" : ""),
+            "aria-pressed": String(config.status === s.id),
+            onClick: async () => {
+                closeRowMenu();
+                await updateMod(name, {status: config.status === s.id ? "" : s.id});
+            },
+        }, [el("span", {class: "ddx-dot", "data-status": s.id}), " " + s.label])));
+
+    menu.replaceChildren(...[
+        el("div", {class: "ddx-menu-title", text: name}),
+        item(61450, "Play", async () => {
+            await ensureOpen(name);
+            document.getElementById("play").dispatchEvent(new MouseEvent("mouseup", {bubbles: true, button: 0}));
+        }),
+        item(config.pinned ? 62327 : 61497, config.pinned ? "Unpin" : "Pin to top", async () => {
+            await functions.setPinned();
+            restorePageMarkers();
+            Library.apply();
+        }),
+        item(60943, config.favorite ? "Remove from favorites" : "Add to favorites", async () => {
+            await functions.onFavorite();
+            restorePageMarkers();
+            Library.apply();
+        }),
+        divider(),
+        stars,
+        statuses,
+        divider(),
+        item(62317, "Change icon…", () => openIconPicker(name)),
+        item(61003, "Set background…", async () => {
+            await ensureOpen(name);
+            await chooseBackground();
+        }),
+        config.background ? item(61568, "Remove background", async () => {
+            await ensureOpen(name);
+            await removeBackground();
+        }) : null,
+        config.reddit ? item(60591, "Open Reddit post", () => openUrl(config.reddit)) : null,
+        config.reddit
+            ? item(61003, "Grab images from Reddit…", () => grabRedditImages(name))
+            : item(61106, "Add Reddit link…", async () => {
+                await ensureOpen(name);
+                openRedditEditor();
+            }),
+        item(60784, "Open mod folder", () => functions.path()),
+        driveStatus.signed_in ? item(62028, "Upload saves to Drive", () => uploadSaves(launcher)) : null,
+        item(60550, "Rename…", async () => {
+            await ensureOpen(name);
+            const title = document.getElementById("modtitle");
+            title.focus();
+            title.select();
+        }),
+        divider(),
+        item(61568, "Reset save data…", async () => {
+            await ensureOpen(name);
+            document.getElementById("reset-save").dispatchEvent(new MouseEvent("mouseup", {bubbles: true}));
+        }),
+        item(60458, "Delete mod…", async () => {
+            await ensureOpen(name);
+            document.getElementById("delete").dispatchEvent(new MouseEvent("mouseup", {bubbles: true}));
+        }, " ddx-menu-danger"),
+    ].filter(Boolean));
+
+    // Up/Down move between the menu's buttons
+    menu.onkeydown = e => {
+        if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+        e.preventDefault();
+        const buttons = [...menu.querySelectorAll("button")];
+        const index = buttons.indexOf(document.activeElement);
+        const next = e.key === "ArrowDown" ? (index + 1) % buttons.length : (index - 1 + buttons.length) % buttons.length;
+        buttons[next]?.focus();
+    };
+
+    // Place it at the pointer, kept inside the window
+    menu.classList.remove("ddx-hidden");
+    menu.style.left = "0px";
+    menu.style.top = "0px";
+    const box = menu.getBoundingClientRect();
+    const left = Math.max(8, Math.min(x, window.innerWidth - box.width - 8));
+    const top = Math.max(8, Math.min(y, window.innerHeight - box.height - 8));
+    menu.style.left = left + "px";
+    menu.style.top = top + "px";
+    menu.querySelector(".ddx-menu-item")?.focus();
+}
+
+// ---------- sidebar customization ----------
+
+function openMainLinksSettings() {
+    openModal("Main links", body => {
+        const list = el("div", {class: "ddx-link-list"}, Sidebar.LINKS.map(link => {
+            const box = el("input", {type: "checkbox", class: "ddx-check"});
+            box.checked = !Sidebar.get().hiddenLinks.includes(link.id);
+            box.addEventListener("change", async () => {
+                const hidden = new Set(Sidebar.get().hiddenLinks);
+                if (box.checked) hidden.delete(link.id); else hidden.add(link.id);
+                await Sidebar.set({hiddenLinks: [...hidden]});
+            });
+            return el("label", {class: "ddx-toggle"}, [box, el("span", {text: link.label})]);
+        }));
+        body.append(
+            el("p", {class: "ddx-text", text: "Untick a link to hide it from the sidebar. Home always stays."}),
+            list,
+            el("div", {class: "ddx-actions"}, [
+                el("button", {
+                    class: "ddx-button ddx-button-ghost", text: "Show all", onClick: async () => {
+                        await Sidebar.set({hiddenLinks: []});
+                        openMainLinksSettings();
+                    },
+                }),
+                el("button", {class: "ddx-button", text: "Done", onClick: closeModal}),
+            ]),
+        );
+    });
+}
+
+function openSidebarSettings() {
+    openModal("Customize sidebar", body => {
+        const prefs = Sidebar.get();
+        const check = (label, hint, checked, onChange) => {
+            const box = el("input", {type: "checkbox", class: "ddx-check"});
+            box.checked = checked;
+            box.addEventListener("change", () => onChange(box.checked));
+            return el("label", {class: "ddx-toggle"}, [box, el("span", {}, [label, hint ? el("span", {class: "ddx-subtle", text: " " + hint}) : null])]);
+        };
+        const update = async patch => {
+            await Sidebar.set(patch);
+            Library.apply();
+        };
+
+        const density = el("div", {class: "ddx-segment", role: "radiogroup", "aria-label": "Row size"},
+            [["comfortable", "Comfortable"], ["compact", "Compact"]].map(([value, label]) => {
+                const button = el("button", {class: "ddx-segment-item", role: "radio", text: label, "aria-checked": String(prefs.density === value)});
+                button.addEventListener("click", async () => {
+                    density.querySelectorAll("button").forEach(b => b.setAttribute("aria-checked", String(b === button)));
+                    await update({density: value});
+                });
+                return button;
+            }));
+
+        body.append(
+            el("h3", {class: "ddx-section", text: "Each mod row shows"}),
+            check("Status dot", "(playing, plan to play, completed, dropped)", prefs.showStatus, v => update({showStatus: v})),
+            check("Rating", null, prefs.showRating, v => update({showRating: v})),
+            check("Play time", null, prefs.showTime, v => update({showTime: v})),
+            el("h3", {class: "ddx-section", text: "Row size"}),
+            density,
+            el("h3", {class: "ddx-section", text: "Main links"}),
+            el("div", {class: "ddx-grid2"}, Sidebar.LINKS.map(link => check(link.label, null, !Sidebar.get().hiddenLinks.includes(link.id), v => {
+                const hidden = new Set(Sidebar.get().hiddenLinks);
+                if (v) hidden.delete(link.id); else hidden.add(link.id);
+                return update({hiddenLinks: [...hidden]});
+            }))),
+            el("h3", {class: "ddx-section", text: "Library"}),
+            check("Sort and filter bar", null, prefs.showSortBar, v => update({showSortBar: v})),
+            el("div", {class: "ddx-actions"}, [
+                el("button", {
+                    class: "ddx-button ddx-button-ghost", text: "Reset to default", onClick: async () => {
+                        await update({...Sidebar.DEFAULTS});
+                        openSidebarSettings();
+                    },
+                }),
+                el("button", {class: "ddx-button", text: "Done", onClick: closeModal}),
+            ]),
+        );
+    });
+}
+
 // ---------- duplicate warning ----------
 
 /** Returns false if the user chose not to import a mod that looks like one they already have. */
@@ -703,7 +1484,62 @@ function buildDom() {
         Library.FILTERS.map(f => el("option", {value: f.id, text: f.label})));
     sort.addEventListener("change", () => Library.setSort(sort.value));
     filter.addEventListener("change", () => Library.setFilter(filter.value));
-    modcount.after(el("div", {id: "ddx-library-bar", class: "sticky ddx-library-bar"}, [sort, filter]));
+    const gear = el("button", {
+        id: "ddx-sidebar-settings", class: "ddx-gear", title: "Customize sidebar", "aria-label": "Customize sidebar",
+        text: String.fromCodePoint(61670), onClick: openSidebarSettings,
+    });
+    const bar = el("div", {id: "ddx-library-bar", class: "sticky ddx-library-bar"}, [sort, filter]);
+    const foldButton = section => el("button", {
+        id: "ddx-fold-" + section, class: "ddx-fold", "aria-expanded": "true",
+        "aria-label": section === "main" ? "Main links" : "Mod list",
+        text: String.fromCodePoint(59982),
+        onClick: e => {
+            e.stopPropagation();
+            Sidebar.toggleSection(section);
+        },
+    });
+    const mainHeader = document.getElementById("main-text").closest("header");
+    mainHeader.append(foldButton("main"), el("button", {
+        id: "ddx-main-settings", class: "ddx-gear", title: "Choose Main links", "aria-label": "Choose Main links",
+        text: String.fromCodePoint(61670), onClick: openMainLinksSettings,
+    }));
+    modcount.append(foldButton("mods"), gear);
+    // Clicking the heading word folds too
+    for (const [labelId, section] of [["main-text", "main"], ["mods-text", "mods"]]) {
+        const label = document.getElementById(labelId);
+        label.classList.add("ddx-fold-label");
+        label.addEventListener("click", () => Sidebar.toggleSection(section));
+    }
+    modcount.after(bar);
+    bar.after(el("p", {id: "ddx-empty", class: "sticky ddx-empty ddx-hidden"}));
+
+    // Right-click (or the Menu key / Shift+F10) on a mod in the sidebar opens its quick menu
+    const modlist = document.getElementById("modlist");
+    modlist.addEventListener("contextmenu", e => {
+        const row = e.target.closest?.("header.sidebutton");
+        if (!row?.id.startsWith("mod-")) return;
+        e.preventDefault();
+        const box = row.getBoundingClientRect();
+        const fromKeyboard = e.button !== 2 || (e.clientX === 0 && e.clientY === 0);
+        openRowMenu(row.id.substring(4), fromKeyboard ? box.left + 24 : e.clientX, fromKeyboard ? box.bottom : e.clientY);
+    });
+    modlist.addEventListener("keydown", e => {
+        const row = e.target.closest?.("header.sidebutton");
+        if (!row?.id.startsWith("mod-")) return;
+        if (e.key === "ContextMenu" || (e.key === "F10" && e.shiftKey)) {
+            e.preventDefault();
+            const box = row.getBoundingClientRect();
+            openRowMenu(row.id.substring(4), box.left + 24, box.bottom);
+        }
+    });
+    document.getElementById("main").append(el("div", {id: "ddx-row-menu", class: "ddx-menu ddx-row-menu ddx-hidden", role: "menu"}));
+    document.addEventListener("mousedown", e => {
+        const menu = document.getElementById("ddx-row-menu");
+        if (menu && !menu.contains(e.target)) closeRowMenu();
+    });
+    document.addEventListener("keydown", e => {
+        if (e.key === "Escape") closeRowMenu();
+    });
 
     // Mod page meta row
     const stars = el("div", {id: "ddx-stars", class: "ddx-stars", title: "Your rating"},
@@ -728,10 +1564,71 @@ function buildDom() {
     ]));
 
     // Top bar pills
-    main.append(el("div", {id: "ddx-top-actions", class: "ddx-top-actions"}, [
-        el("button", {id: "ddx-storage-pill", class: "ddx-pill", title: "See what your mods use and clean up", onClick: openStorage}, ["▤ ", "Storage"]),
-        el("button", {id: "ddx-cloud-pill", class: "ddx-pill", title: "Google Drive save sync", onClick: openDriveSettings}, ["☁ ", "Cloud Saves"]),
-    ]));
+    const sideLink = (id, icon, label, title, onClick) => el("button", {id, class: "sidebutton sidebutton2 sticky", title, onClick}, [
+        el("span", {class: "ddx-side-icon", text: String.fromCodePoint(icon)}),
+        " " + label,
+    ]);
+    document.getElementById("update").after(
+        sideLink("ddx-side-storage", 60921, "Storage", "See what your mods use and clean up", openStorage),
+        sideLink("ddx-side-cloud", 60317, "Cloud Saves", "Google Drive save sync", openDriveSettings),
+        el("button", {
+            id: "ddx-side-reimport", class: "sidebutton sidebutton2 sticky ddx-reimport ddx-hidden",
+            title: "Mods restored from Google Drive that aren't on this PC yet", onClick: openReimport,
+        }, [
+            el("span", {class: "ddx-side-icon", text: String.fromCodePoint(60802)}),
+            " ",
+            el("span", {class: "ddx-reimport-label", text: "Reimport mods"}),
+        ]),
+    );
+
+    // "More" menu with the destructive actions, beside the Profiles button
+    const more = el("button", {id: "ddx-more", class: "ddx-more hide", title: "More actions", "aria-haspopup": "menu", text: String.fromCodePoint(61302)});
+    const fire = id => {
+        menu.classList.add("ddx-hidden");
+        document.getElementById(id)?.dispatchEvent(new MouseEvent("mouseup", {bubbles: true}));
+    };
+    const run = action => () => {
+        menu.classList.add("ddx-hidden");
+        action();
+    };
+    const menu = el("div", {id: "ddx-more-menu", class: "ddx-menu ddx-hidden", role: "menu"}, [
+        el("button", {class: "ddx-menu-item", role: "menuitem", onClick: run(() => openIconPicker(ctx.getCurrentEntry()))}, [
+            el("span", {class: "ddx-side-icon", text: String.fromCodePoint(62317)}), " Change icon…",
+        ]),
+        el("button", {class: "ddx-menu-item", role: "menuitem", onClick: run(chooseBackground)}, [
+            el("span", {class: "ddx-side-icon", text: String.fromCodePoint(61003)}), " Set background…",
+        ]),
+        el("button", {id: "ddx-remove-bg", class: "ddx-menu-item", role: "menuitem", onClick: run(removeBackground)}, [
+            el("span", {class: "ddx-side-icon", text: String.fromCodePoint(61568)}), " Remove background",
+        ]),
+        el("button", {id: "ddx-grab-reddit", class: "ddx-menu-item", role: "menuitem", onClick: run(() => grabRedditImages(ctx.getCurrentEntry()))}, [
+            el("span", {class: "ddx-side-icon", text: String.fromCodePoint(60591)}), " Grab images from Reddit…",
+        ]),
+        el("div", {class: "ddx-menu-divider", role: "separator"}),
+        el("button", {class: "ddx-menu-item", role: "menuitem", onClick: () => fire("reset-save")}, [
+            el("span", {class: "ddx-side-icon", text: String.fromCodePoint(61568)}), " Reset save data…",
+        ]),
+        el("button", {class: "ddx-menu-item ddx-menu-danger", role: "menuitem", onClick: () => fire("delete")}, [
+            el("span", {class: "ddx-side-icon", text: String.fromCodePoint(60458)}), " Delete mod…",
+        ]),
+    ]);
+    more.addEventListener("click", e => {
+        e.stopPropagation();
+        menu.classList.toggle("ddx-hidden");
+        if (!menu.classList.contains("ddx-hidden")) menu.querySelector("button")?.focus();
+    });
+    document.addEventListener("click", e => {
+        if (!menu.contains(e.target) && e.target !== more) menu.classList.add("ddx-hidden");
+    });
+    menu.addEventListener("keydown", e => {
+        if (e.key === "Escape") {
+            menu.classList.add("ddx-hidden");
+            more.focus();
+        }
+    });
+    container.append(more, menu);
+    new MutationObserver(() => more.classList.toggle("hide", document.getElementById("play").classList.contains("hide")))
+        .observe(document.getElementById("play"), {attributes: true, attributeFilter: ["class"]});
 
     // Modal, toast, drop overlay
     const bg = el("div", {id: "ddx-modal-bg", class: "ddx-modal-bg ddx-hidden"}, [
@@ -749,7 +1646,10 @@ function buildDom() {
     });
     main.append(
         bg,
-        el("div", {id: "ddx-toast", class: "ddx-toast"}),
+        el("div", {id: "ddx-toast", class: "ddx-toast", role: "status", "aria-live": "polite"}, [
+            el("div", {class: "ddx-namebox"}),
+            el("div", {class: "ddx-toast-text"}),
+        ]),
         el("div", {id: "ddx-drop", class: "ddx-drop"}, [
             el("div", {class: "ddx-drop-box"}, [
                 el("div", {class: "ddx-drop-title", text: "Drop to import"}),
@@ -761,18 +1661,65 @@ function buildDom() {
 
 /** Syncs the sort/filter dropdowns with the saved choice and reorders the list. */
 export function onLibraryLoaded() {
+    Sidebar.loadSaved();
     Library.loadSaved();
     const sort = document.getElementById("ddx-sort");
     const filter = document.getElementById("ddx-filter");
     if (sort) sort.value = Library.getSort();
     if (filter) filter.value = Library.getFilter();
     Library.apply();
+    refreshReimportReminder();
+    startLauncherSync();
+}
+
+/**
+ * Most of the original buttons listen for "mouseup", which keyboards never send.
+ * Enter/Space on such a button sends one, and Enter on a mod row opens it.
+ */
+function setupKeyboard() {
+    document.addEventListener("keydown", e => {
+        if (e.key !== "Enter" && e.key !== " ") return;
+        const target = e.target;
+        if (!(target instanceof HTMLElement) || target.closest("#ddx-dialog, #ddx-modal-bg, #ddx-more-menu")) return;
+        if (target.matches("header.sidebutton")) {
+            e.preventDefault();
+            target.click();
+        } else if (target.matches("button") && !target.id.startsWith("ddx-")) {
+            target.dispatchEvent(new MouseEvent("mouseup", {bubbles: true, button: 0}));
+        }
+    });
+}
+
+/**
+ * The original screen blur can be left on with nothing above it (a panel that
+ * never opened). Clicking it or pressing Escape then clears it.
+ */
+function setupBlurRescue() {
+    const blur = document.getElementById("profile-blur");
+    if (!blur) return;
+    const panelOpen = () =>
+        !document.getElementById("profile-bg")?.classList.contains("hide") ||
+        !document.getElementById("report-bg")?.classList.contains("hide") ||
+        document.getElementById("image-picker-bg")?.classList.contains("image-picker-visible") ||
+        !document.getElementById("input-prompt")?.classList.contains("hide");
+    const rescue = () => {
+        if (!blur.classList.contains("hide") && !panelOpen()) blur.classList.add("hide");
+    };
+    blur.addEventListener("mouseup", e => {
+        if (e.target === blur) rescue();
+    });
+    document.addEventListener("keydown", e => {
+        if (e.key === "Escape" && !isModalOpen() && document.getElementById("ddx-dialog")?.classList.contains("ddx-hidden") !== false) rescue();
+    });
 }
 
 export async function init(context) {
     ctx = {...ctx, ...context};
     Library.init(context.getProgramConfig, context.saveProgramConfig);
+    Sidebar.init(context.getProgramConfig, context.saveProgramConfig);
     buildDom();
+    setupKeyboard();
+    setupBlurRescue();
     await setupDropOverlay();
     await refreshDriveStatus();
 }

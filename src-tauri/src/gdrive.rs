@@ -17,6 +17,8 @@ use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+pub mod launcher;
+
 const AUTH_URL: &str = "https://accounts.google.com/o/oauth2/v2/auth";
 const TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
 const REVOKE_URL: &str = "https://oauth2.googleapis.com/revoke";
@@ -37,6 +39,12 @@ struct DriveState {
     email: Option<String>,
     folder_id: Option<String>,
     auto_sync: bool,
+    /// Hash of the launcher data last uploaded from this PC.
+    #[serde(default)]
+    launcher_hash: Option<String>,
+    /// Drive modifiedTime of the launcher backup this PC last uploaded or restored.
+    #[serde(default)]
+    launcher_remote_time: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -169,8 +177,40 @@ async fn check(resp: reqwest::Response) -> Result<reqwest::Response, String> {
     } else {
         let status = resp.status();
         let body = resp.text().await.unwrap_or_default();
-        Err(format!("Google returned {}: {}", status, body))
+        Err(google_error(status.as_u16(), &body))
     }
+}
+
+/// Turns a Google error response into one readable sentence.
+fn google_error(status: u16, body: &str) -> String {
+    let v: serde_json::Value = serde_json::from_str(body).unwrap_or_default();
+    let reasons: Vec<&str> = v["error"]["details"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .chain(v["error"]["errors"].as_array().into_iter().flatten())
+        .filter_map(|d| d["reason"].as_str())
+        .collect();
+    if reasons.iter().any(|r| *r == "SERVICE_DISABLED" || *r == "accessNotConfigured") {
+        let project = v["error"]["details"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find_map(|d| d["metadata"]["consumer"].as_str())
+            .map(|c| c.trim_start_matches("projects/").to_string());
+        return format!(
+            "The Google Drive API is turned off for your Google Cloud project{}. Open console.cloud.google.com, \
+             go to APIs & Services > Library, search for Google Drive API and click Enable, then try again in a few minutes.",
+            project.map(|p| format!(" ({})", p)).unwrap_or_default()
+        );
+    }
+    let message = v["error"]["message"]
+        .as_str()
+        .or_else(|| v["error_description"].as_str())
+        .or_else(|| v["error"].as_str())
+        .map(String::from)
+        .unwrap_or_else(|| body.chars().take(300).collect());
+    format!("Google Drive error {}: {}", status, message)
 }
 
 /// Returns a valid access token, refreshing it when it is about to expire.
@@ -332,9 +372,13 @@ async fn find_or_create_folder(state: &mut DriveState, token: &str) -> Result<St
 }
 
 async fn find_remote(token: &str, folder_id: &str, mod_id: &str) -> Result<Option<RemoteSave>, String> {
+    find_named(token, folder_id, &remote_file_name(mod_id)).await
+}
+
+async fn find_named(token: &str, folder_id: &str, file_name: &str) -> Result<Option<RemoteSave>, String> {
     let q = format!(
         "name = '{}' and '{}' in parents and trashed = false",
-        query_escape(&remote_file_name(mod_id)),
+        query_escape(file_name),
         query_escape(folder_id)
     );
     let resp = client()
@@ -534,6 +578,8 @@ pub async fn gdrive_sign_out() -> Result<(), String> {
     state.access_token = None;
     state.email = None;
     state.folder_id = None;
+    state.launcher_hash = None;
+    state.launcher_remote_time = None;
     save_state(&state)
 }
 
@@ -760,6 +806,81 @@ pub async fn ddx_remove(paths: Vec<String>) -> usize {
         .count()
 }
 
+/// Image hosts the Reddit grabber may send. Anything else is ignored.
+const IMAGE_HOSTS: [&str; 4] = ["i.redd.it", "preview.redd.it", "external-preview.redd.it", "i.imgur.com"];
+const MAX_IMAGE_BYTES: usize = 20 * 1024 * 1024;
+const MAX_IMAGES: usize = 40;
+
+#[derive(Serialize)]
+pub struct FetchedImage {
+    url: String,
+    path: String,
+}
+
+fn image_extension(content_type: &str) -> Option<&'static str> {
+    match content_type.split(';').next().unwrap_or("").trim() {
+        "image/png" => Some("png"),
+        "image/jpeg" | "image/jpg" => Some("jpg"),
+        "image/webp" => Some("webp"),
+        "image/gif" => Some("gif"),
+        _ => None,
+    }
+}
+
+fn allowed_image_url(raw: &str) -> Option<reqwest::Url> {
+    let url = reqwest::Url::parse(raw).ok()?;
+    if url.scheme() != "https" {
+        return None;
+    }
+    let host = url.host_str()?.to_ascii_lowercase();
+    IMAGE_HOSTS.contains(&host.as_str()).then_some(url)
+}
+
+/// Downloads the images a Reddit post page sent over, into store/temp/reddit_images.
+#[tauri::command]
+pub async fn ddx_fetch_images(urls: Vec<String>) -> Result<Vec<FetchedImage>, String> {
+    let dir = store_dir().join("temp").join("reddit_images");
+    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let client = reqwest::Client::builder()
+        .user_agent("DokiModManager image import")
+        .connect_timeout(Duration::from_secs(15))
+        .timeout(Duration::from_secs(60))
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let mut fetched = Vec::new();
+    for raw in urls.iter().take(MAX_IMAGES) {
+        let Some(url) = allowed_image_url(raw) else { continue };
+        let Ok(resp) = client.get(url.clone()).send().await else { continue };
+        if !resp.status().is_success() {
+            continue;
+        }
+        let content_type = resp
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .to_string();
+        let Some(ext) = image_extension(&content_type) else { continue };
+        if resp.content_length().is_some_and(|len| len as usize > MAX_IMAGE_BYTES) {
+            continue;
+        }
+        let Ok(bytes) = resp.bytes().await else { continue };
+        if bytes.len() > MAX_IMAGE_BYTES {
+            continue;
+        }
+        let name = format!("{}.{}", &hex::encode(Sha256::digest(url.as_str().as_bytes()))[..20], ext);
+        let path = dir.join(name);
+        if fs::write(&path, &bytes).is_ok() {
+            fetched.push(FetchedImage {
+                url: url.to_string(),
+                path: path.to_string_lossy().into_owned(),
+            });
+        }
+    }
+    Ok(fetched)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -836,5 +957,17 @@ mod tests {
         assert_eq!(url_decode("4%2F0Ab-x+y"), "4/0Ab-x y");
         assert_eq!(query_escape("it's"), "it\\'s");
         assert_eq!(remote_file_name("Mod/Name"), "Mod_Name.ddmm-saves.zip");
+    }
+
+    #[test]
+    fn image_url_allowlist() {
+        assert!(allowed_image_url("https://i.redd.it/abc123.png").is_some());
+        assert!(allowed_image_url("https://preview.redd.it/x.jpg?width=640&s=1").is_some());
+        assert!(allowed_image_url("http://i.redd.it/abc.png").is_none());
+        assert!(allowed_image_url("https://evil.example/i.redd.it.png").is_none());
+        assert!(allowed_image_url("https://i.redd.it.evil.example/a.png").is_none());
+        assert!(allowed_image_url("file:///C:/Windows/win.ini").is_none());
+        assert_eq!(image_extension("image/jpeg; charset=binary"), Some("jpg"));
+        assert_eq!(image_extension("text/html"), None);
     }
 }

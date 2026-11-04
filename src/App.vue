@@ -8,7 +8,7 @@
     <div class="background"></div>
     <button class="import-zip hide" id="select-zip">Import Zip</button>
     <header class="load-subtitle" id="loadingsub">PLEASE REFRESH THIS APPLICATION (Control + R)</header>
-    <header class="load-title" id="loadinghead">Doki Doki Mod Manager <span class="load-title-version" id="load-title-version">/ 1.8.0</span></header>
+    <header class="load-title" id="loadinghead">Doki Doki Mod Manager (FORD EDITION) <span class="load-title-version" id="load-title-version">/ 1.8.0</span></header>
 
     <div class="wheel" id="throbber"></div>
     <div class="loading-bar">
@@ -24,7 +24,7 @@
     <div class="background-clip">
       <div data-tauri-drag-region class="bg" id="bg"></div>
     </div>
-    <header class="title"><span class="title-colored">Doki Doki</span> Mod Manager</header>
+    <header class="title"><span class="title-colored">Doki Doki</span> Mod Manager (FORD EDITION)</header>
     <div class="container-a smooth-hide" id="modlist">
       <header class="sidetext sticky"><span id="main-text">Main</span> <span
           style="font-weight: normal; font-size: 0.75rem; cursor: grab; color: rgb(220,220,220)" id="version">(v1.0.0-release)</span>

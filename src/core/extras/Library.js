@@ -1,4 +1,5 @@
 import {getLauncher, getLaunchers} from "../Launchers";
+import * as Sidebar from "./Sidebar";
 
 /**
  * Sorting, status filtering and duplicate detection for the mod list.
@@ -81,8 +82,7 @@ export async function setFilter(mode) {
 
 /** Position of a mod within its group; falls back to the alphabetical index. */
 export function rankOf(name, alphabeticalIndex) {
-    if (sortMode === "name" || !ranks.has(name)) return alphabeticalIndex;
-    return ranks.get(name);
+    return ranks.has(name) ? ranks.get(name) : alphabeticalIndex;
 }
 
 function configOf(name) {
@@ -116,22 +116,25 @@ export function apply() {
         size: c => c.size ?? 0,
     }[sortMode];
 
+    // "Name" compares whole names; the original order only looked at the first letter.
     ranks = new Map();
-    if (value) {
-        names
-            .slice()
-            .sort((a, b) => (value(configOf(b)) - value(configOf(a))) || byName(a, b))
-            .forEach((name, index) => ranks.set(name, index));
-    }
+    names
+        .slice()
+        .sort(value ? (a, b) => (value(configOf(b)) - value(configOf(a))) || byName(a, b) : byName)
+        .forEach((name, index) => ranks.set(name, index));
 
     let shown = 0;
     for (const name of names) {
         const launcher = getLauncher(name).getFunctions();
         launcher.resetOrder();
-        const visible = matchesFilter(configOf(name));
+        const config = configOf(name);
+        const visible = matchesFilter(config);
         launcher.item.classList.toggle("ddx-filtered", !visible);
+        launcher.item.tabIndex = 0;
+        Sidebar.decorate(launcher.item, config);
         if (visible) shown++;
     }
+    Sidebar.setEmptyState(names.length, shown);
 
     const counter = document.getElementById("nummods");
     if (counter) {
