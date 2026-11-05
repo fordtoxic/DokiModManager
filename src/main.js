@@ -1081,7 +1081,6 @@ async function addMod(name) {
     const favoriteText = "<span style=\"font-family: Icon,serif\">&#60938;</span><span style='padding-left: 1vw'></span>" + "<span class='sidebutton-text'>" + shorthand + "</span>";
     const pinnedText = "<span style=\"font-family: Icon,serif\">&#61496;</span><span style='padding-left: 1vw'></span>" + "<span class='sidebutton-text'>" + shorthand + "</span>";
 
-    let launch_time = Date.now();
 
     sidetext.classList.add("sidebutton");
     sidetext.id = elementId;
@@ -1213,7 +1212,6 @@ async function addMod(name) {
 
 	    setTimeout(async () => {
 		AssetsManager.Sound.play(AssetsManager.Sound.BEEP_SOUND)
-		launch_time = Date.now();
 		if (Hud.isVoid(configData.renpy)) {
 		    configData.renpy = await getRenpy(modDirectory);
 		    await saveModData();
@@ -1231,7 +1229,7 @@ async function addMod(name) {
 	    }, 500)
 	},
 	get_time: async () => {
-	    return Date.now() - launch_time;
+	    return await invoke("get_play_time");
 	},
 	path: async () => {
 	    await invoke("open_path", {
@@ -1260,7 +1258,7 @@ async function addMod(name) {
 	    Hud.setHeart(configData.favorite)
 	},
 	close: async () => {
-	    const playTime = Date.now() - launch_time;
+	    const playTime = await invoke("take_play_time");
 	    const data = await metadata(selectedPath + fileTerminator + name);
 
 	    if (alertPath === undefined) {

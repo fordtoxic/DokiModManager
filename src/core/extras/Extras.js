@@ -1,6 +1,6 @@
 import {convertFileSrc, invoke} from "@tauri-apps/api/core";
 import {listen} from "@tauri-apps/api/event";
-import {confirm, notify} from "./Dialog";
+import {confirm, hideNotify, notify} from "./Dialog";
 import {openUrl} from "@tauri-apps/plugin-opener";
 import {open as openFileDialog} from "@tauri-apps/plugin-dialog";
 import {mkdir, readFile, remove, writeFile} from "@tauri-apps/plugin-fs";
@@ -293,7 +293,13 @@ async function uploadSaves(launcher, quiet = false) {
     const name = functions.getName();
     if (!quiet) toast("Uploading saves for " + name + "…", "info", 0);
     const folders = await getSaveFolders(launcher);
-    const remote = await invoke("gdrive_upload", {modId: name, folders});
+    let remote;
+    try {
+        remote = await invoke("gdrive_upload", {modId: name, folders});
+    } catch (e) {
+        if (!quiet) hideNotify();
+        throw e;
+    }
     await functions.update({gdrive_synced: remote.modified_time});
     toast("Saves for " + name + " uploaded to Google Drive", "ok");
     return remote;
@@ -1322,7 +1328,7 @@ function openRowMenu(name, x, y) {
                 openRedditEditor();
             }),
         item(60784, "Open mod folder", () => functions.path()),
-        driveStatus.signed_in ? item(62028, "Upload saves to Drive", () => uploadSaves(launcher)) : null,
+        driveStatus.signed_in ? item(62028, "Upload saves to Drive", () => uploadSaves(launcher).catch(e => toast(String(e), "error", 7000))) : null,
         item(60550, "Rename…", async () => {
             await ensureOpen(name);
             const title = document.getElementById("modtitle");

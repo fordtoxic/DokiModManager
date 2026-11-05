@@ -127,3 +127,8 @@ export function notify(text, kind = "info", ms = 3500) {
     clearTimeout(toastTimer);
     if (ms > 0) toastTimer = setTimeout(() => node.classList.remove("ddx-toast-visible"), ms);
 }
+
+export function hideNotify() {
+    clearTimeout(toastTimer);
+    document.getElementById("ddx-toast")?.classList.remove("ddx-toast-visible");
+}

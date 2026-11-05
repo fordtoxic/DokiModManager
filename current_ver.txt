@@ -1,9 +1,16 @@
-1.8.1-ford.2
-Recommended (bug fix)
+1.8.1-ford.3
+Recommended
 
-Renaming mods
-- Fixed every new mod name being rejected as invalid
-- Bad names now say what's wrong (characters Windows doesn't
-  allow, a dot or space at the end, too long, reserved names)
-- Fixed the check for another mod that already has that name
-- Changing only capital letters (my mod -> My Mod) works
+Play time
+- Play time now only counts while the game's window is in front
+  and you've used the keyboard or mouse in the last 5 minutes
+- The timer in the launcher pauses when you switch away or go idle
+- Controllers and auto-forward don't count as activity, so time
+  stops after 5 minutes of only those (Windows only; Linux and
+  Mac still count all the time the game is open)
+
+Google Drive
+- Fixed "Uploading saves..." staying on screen after closing a mod
+  that has no saves
+- "Upload saves to Drive" in the right-click menu now shows why
+  an upload failed

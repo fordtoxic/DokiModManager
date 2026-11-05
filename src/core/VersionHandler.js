@@ -1,7 +1,7 @@
 import Logger from "./utils/Logger";
 import BRANCHES from "./enum/BRANCHES";
 
-export const CLIENT_VERSION = "1.8.1-ford.2"
+export const CLIENT_VERSION = "1.8.1-ford.3"
 const CURRENT_BRANCH = BRANCHES.STABLE.RELEASE
 const VERSION_URL = `https://raw.githubusercontent.com/fordtoxic/DokiModManager/refs/heads/main/${CURRENT_BRANCH}`
 

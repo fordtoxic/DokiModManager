@@ -52,6 +52,7 @@ mod discord_rpc;
 mod downloader;
 mod gdrive;
 mod hash;
+mod play_time;
 mod simple_logger;
 mod unarc_extractor;
 
@@ -618,9 +619,11 @@ async fn launch(app: AppHandle, path: &str, id: &str, renpy: &str) -> Result<(),
     let mut launch_time = Instant::now();
     let mut error: Option<String> = None;
 
+    play_time::reset();
     stamp(format!("Got Command To Launch Binary : {}", path).as_str());
     fix_renpy_8(renpy, &scripts).await;
     set_playing(id);
+    let play_time_tracker = play_time::start(PathBuf::from(&dir), file_name.to_string());
 
     #[cfg(target_os = "linux")]
     if path.ends_with(".sh") {
@@ -763,6 +766,8 @@ async fn launch(app: AppHandle, path: &str, id: &str, renpy: &str) -> Result<(),
             }
         }
     }
+
+    drop(play_time_tracker);
 
     if let Some(msg) = error {
         let success = msg.eq("Exit code: 0 (Success)");
@@ -2197,6 +2202,8 @@ pub async fn run() {
             gdrive::launcher::launcher_take_pending,
             gdrive::launcher::launcher_pending_list,
             gdrive::launcher::launcher_forget_pending,
+            play_time::get_play_time,
+            play_time::take_play_time,
             gdrive::ddx_measure,
             gdrive::ddx_remove,
             gdrive::ddx_fetch_images

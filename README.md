@@ -39,6 +39,7 @@ All credit for the original manager goes to BKunzite. The features added in this
 + 1–5 star ratings
 + Status labels: Playing, Plan to play, Completed, Dropped (and filter the list by status or rating)
 + A Reddit link for each mod
++ Play time that only counts while the game window is in front and you aren't idle (Windows)
 + Sorting (name, rating, play time, last played, size) and filters
 + Duplicate warning when you import a mod you already have
 
